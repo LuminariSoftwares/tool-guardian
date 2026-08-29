@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tool-guardian"
+version = "0.1.0"
+description = "An MCP router that keeps tool definitions from filling the context window — it fronts your MCP servers behind three generic tools and discovers the rest on demand."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "LuminariSoftwares" }]
+keywords = ["mcp", "model-context-protocol", "context-window", "tools", "proxy",
+            "router", "progressive-disclosure", "local-llm", "ollama", "claude"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Pure standard library at runtime — nothing to install.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/LuminariSoftwares/tool-guardian"
+Repository = "https://github.com/LuminariSoftwares/tool-guardian"
+Changelog = "https://github.com/LuminariSoftwares/tool-guardian/blob/main/CHANGELOG.md"
+Issues = "https://github.com/LuminariSoftwares/tool-guardian/issues"
+
+[project.scripts]
+tool-guardian = "tool_guardian:main"
+
+[tool.setuptools]
+py-modules = ["tool_guardian"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"

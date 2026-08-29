@@ -1,0 +1,13 @@
+# python build artifacts
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+# local config that may hold server env/tokens
+mcp.json
+.mcp.json
+# logs
+*.log

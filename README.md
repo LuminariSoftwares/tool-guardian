@@ -1,0 +1,118 @@
+# Tool Guardian
+
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
+
+An MCP server that sits in front of your other MCP servers and exposes **three generic tools** instead of dozens of specific ones — discovering the rest **on demand** — so tool definitions stop eating your context window before the model reads a word.
+
+Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-guardian): **Context Guardian compacts the conversation before the window fills; Tool Guardian keeps the tools from filling it in the first place.** Two halves of the same problem.
+
+## Why this exists
+
+MCP tool definitions are re-sent on **every single request**, whether the model touches them or not. A handful of servers routinely comes to tens of thousands of tokens — often most of a small local model's window — before the first user message. On one real setup, seven MCP servers came to **28,689 tokens, 87.6% of a 32K window**, as a fixed floor under everything else.
+
+You have two ways to deal with that today, and both cost you something:
+
+| Approach | The cost |
+|---|---|
+| Load fewer MCP servers | You lose the capability entirely |
+| Live with it | Two-thirds of the window is gone before you type |
+
+Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just three tools plus a one-line catalogue of server names (~300 tokens). The full schema for a tool is fetched only when the model asks for it:
+
+```
+list_capabilities(server?)      one line per tool — names and purpose
+describe_tool(server, tool)     the full argument schema for ONE tool
+call_tool(server, tool, args)   invoke it, return the result
+```
+
+Same idea as a search index: cheap catalogue always visible, detail on demand.
+
+## Where it sits
+
+```
+your CLI / agent (Claude Code, OpenClaude, any MCP client)
+    -> Tool Guardian          (this project — one MCP server)
+        -> your real MCP servers (filesystem, git, n8n, database, ...)
+```
+
+You point your client at **one** MCP server — Tool Guardian — and give Tool Guardian the same `mcpServers` config you'd have given the client. It starts your servers, keeps them warm, and proxies calls through on demand.
+
+## Install
+
+```bash
+pip install tool-guardian
+```
+
+Pure standard library — nothing else to install.
+
+## Configure
+
+Tool Guardian reads the **standard** `mcpServers` block (the same shape Claude Desktop / Claude Code and most MCP clients use):
+
+```json
+{
+  "mcpServers": {
+    "files": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+    },
+    "git": {
+      "command": "uvx",
+      "args": ["mcp-server-git"],
+      "description": "git status / diff / commit / log"
+    }
+  }
+}
+```
+
+An optional per-server `"description"` enriches the catalogue the model sees. Without one, the hint is derived from that server's own tool names at startup.
+
+Config is searched in order: `--config PATH`, `$TOOL_GUARDIAN_CONFIG`, `./mcp.json`, `./.mcp.json`, `~/.tool-guardian/mcp.json`.
+
+## Run
+
+Point your MCP client at Tool Guardian as a single stdio server:
+
+```json
+{
+  "mcpServers": {
+    "tool-guardian": {
+      "command": "tool-guardian",
+      "args": ["--config", "/path/to/your/mcp.json"]
+    }
+  }
+}
+```
+
+Everything your servers can do is still reachable — the model just discovers it in two steps (`list_capabilities` → `call_tool`) instead of paying for all of it up front.
+
+## See what it saves
+
+```bash
+tool-guardian --selftest
+```
+
+Starts your configured servers, prints the catalogue, and reports the tokens the three router tools cost versus loading every server's tools directly — e.g. *"router tools cost ~310 tokens vs ~28,700 for the full set behind them → ~28,390 freed on every request."*
+
+## Design notes (the parts that matter)
+
+- **Failure is loud, on purpose.** A router is a single point of failure: without one a broken server costs you that server; behind one it could cost you all of them. So an unreachable backend is reported as `UNKNOWN` with its real error, **never as an empty tool list**. A model that asks for a server and gets `[]` concludes the capability doesn't exist and quietly works around it — the exact failure this avoids.
+- **Built for models, not just machines.** It accepts a tool's `args` as either an object or a JSON string, aliases the near-misses models actually send (`query`/`name` → `server`), and ends every result with the concrete **NEXT STEP** to call — because a model that receives a catalogue and no instruction tends to stop there instead of finishing the task.
+- **The catalogue names your servers.** Three unnamed generic tools give a model no reason to believe any capability exists, so it improvises. Naming the servers in the tool description costs a few tokens and is the difference between a catalogue the model opens and three tools it ignores.
+
+## What it does *not* do (yet)
+
+- **stdio servers only.** An HTTP/SSE server (a `"url"` entry) is reported `UNSUPPORTED` — load it directly rather than through here.
+- It does not merge or rename tools; it proxies them faithfully. `call_tool(server, tool, args)` reaches the real tool unchanged.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
