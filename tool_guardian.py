@@ -441,6 +441,11 @@ def selftest(config: str = "") -> int:
           % (len(ok), sum(len(b.tools) for b in ok)))
     for b in bad:
         print("  %s: %s -- %s" % (b.name, b.status, b.error[:100]))
+    print("\nNOTE: this measures the token SAVING and that backends start. It does"
+          "\nNOT prove your model will call list_capabilities/call_tool -- smaller"
+          "\nlocal models often bypass the router and use built-in tools instead."
+          "\nVerify discovery->call with your real model first. See the README's"
+          "\n'Model requirement' section.")
     return 0 if ok else 1
 
 

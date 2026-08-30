@@ -28,6 +28,14 @@ call_tool(server, tool, args)   invoke it, return the result
 
 Same idea as a search index: cheap catalogue always visible, detail on demand.
 
+## Model requirement (read this before you switch)
+
+The whole design rests on one behaviour: the model must **proactively call `list_capabilities` (then `call_tool`) when it needs a tool.** Capable/frontier models do this reliably. **Smaller local models often do not** — faced with a task, they reach for their built-in tools (Bash/Read/shell) or a script and never open the catalogue, so the hidden tools are simply never reached.
+
+This was measured directly (2026) against a real studio stack: **gpt-oss:20b and qwen3-30b-a3b both bypassed the router** on ordinary tasks — even with the `NEXT STEP` nudge in every result *and* a dedicated router sub-agent priming them. They either treated a tool name as a shell command or scripted their way around it. The token math worked perfectly; the models just wouldn't drive it.
+
+So: `--selftest` proves the *saving* and that your backends start — it does **not** prove your model will use the router. **Test discovery→call with your actual model before committing.** If it won't reliably call these three tools, you're better off exposing a small *curated, visible* subset of servers than routing everything behind a catalogue the model never opens. The win here is real, but it's a win for models that ask.
+
 ## Where it sits
 
 ```
