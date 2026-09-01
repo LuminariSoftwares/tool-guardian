@@ -78,6 +78,41 @@ An optional per-server `"description"` enriches the catalogue the model sees. Wi
 
 Config is searched in order: `--config PATH`, `$TOOL_GUARDIAN_CONFIG`, `./mcp.json`, `./.mcp.json`, `~/.tool-guardian/mcp.json`.
 
+## Environment and `.env`
+
+Tool Guardian loads a `.env` itself and expands variables in your backend
+args, so secrets don't have to be exported into the environment by whatever
+launches it.
+
+- **`.env` autoload.** On startup it looks for a `.env` in this order: an
+  explicit path, `$TOOL_GUARDIAN_ENV`, then an **upward search** — starting at
+  the config file's directory (or the cwd) and walking up to 5 parent
+  directories, loading the first `.env` it finds. This lets your config live
+  in a nested folder while the `.env` sits at the project root. Values already
+  in the real environment win over the file; a missing `.env` is a no-op,
+  never an error.
+
+  Example — config nested under the project, `.env` at the root:
+
+      myproject/
+      ├── .env                 <- (3) found here, loaded, search stops
+      └── config/
+          └── dsh/
+              └── mcp.json      <- $TOOL_GUARDIAN_CONFIG points here
+
+  The search walks upward from the config's directory:
+
+      1. myproject/config/dsh/.env    -> not found
+      2. myproject/config/.env        -> not found
+      3. myproject/.env               -> FOUND  (stops here)
+
+- **Variable expansion.** `${VAR}`, `$VAR` and `%VAR%` are expanded in each
+  backend's `args` from the environment; unknown variables are left as-is.
+  Keep a secret in `.env` and reference it in a backend arg:
+
+      "args": ["-y", "mcp-remote", "https://app.openseo.so/mcp",
+               "--header", "Authorization: Bearer ${OPENSEO_API_KEY}"]
+
 ## Run
 
 Point your MCP client at Tool Guardian as a single stdio server:

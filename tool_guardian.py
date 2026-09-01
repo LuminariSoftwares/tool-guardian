@@ -63,7 +63,12 @@ import threading
 import time
 from pathlib import Path
 
-__version__ = "0.1.0"
+try:
+    import tg_env  # sibling module: .env autoload + ${VAR}/%VAR% expansion in args
+except ImportError:  # degrade gracefully if tg_env.py is not beside this file
+    tg_env = None
+
+__version__ = "0.2.0"
 
 PROTOCOL = "2024-11-05"
 START_TIMEOUT = float(os.environ.get("TOOL_GUARDIAN_START_TIMEOUT", "90"))
@@ -183,7 +188,10 @@ class Backend:
             return
         env = dict(os.environ)
         env.update({k: str(v) for k, v in (self.spec.get("env") or {}).items()})
-        cmd = [command, *(self.spec.get("args") or [])]
+        args = self.spec.get("args") or []
+        if tg_env is not None:
+            args = tg_env.expand_args(args)
+        cmd = [command, *args]
         try:
             self.proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -460,6 +468,14 @@ def main(argv=None) -> int:
     if a.version:
         print(__version__)
         return 0
+    if tg_env is not None:
+        # Anchor the .env search on whichever config this run uses, then let
+        # tg_env walk up from there to find the project-root .env. A working
+        # router always has a config, so this always has an anchor.
+        cfg = a.config or os.environ.get("TOOL_GUARDIAN_CONFIG", "")
+        if cfg:
+            os.environ.setdefault("TOOL_GUARDIAN_CONFIG", cfg)
+        tg_env.load_env_file()
     if a.selftest:
         return selftest(a.config)
     r = Router(a.config)

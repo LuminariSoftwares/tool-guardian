@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0 — .env autoload + variable expansion
+
+The router now loads its own `.env` and expands variables in backend args, so
+secrets no longer have to be pre-exported into the environment by whatever
+launches Tool Guardian.
+
+- **`.env` autoload:** resolved by (1) an explicit path, (2) `$TOOL_GUARDIAN_ENV`,
+  or (3) an **upward search** from the config directory (or cwd) up to 5 parent
+  directories — so a nested config still finds a project-root `.env`. The real
+  environment always wins over the file; a missing `.env` is a no-op.
+- **Variable expansion in args:** `${VAR}`, `$VAR` and `%VAR%` in each backend's
+  `args` are expanded from the environment (unknown vars left literal).
+- New `tg_env.py` (standard library only); `tool_guardian.py` imports it and
+  degrades gracefully if it is absent.
+
 ## 0.1.0 — first release
 
 An MCP server that fronts your other MCP servers behind three generic tools
