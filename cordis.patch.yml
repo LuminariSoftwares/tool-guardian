@@ -1,0 +1,53 @@
+# The dsh-tool-guardian bundle patch. Applied after @deepseek-ai/dsh-base and
+# before the profile's own cordis.patch.yml, so every key below can be
+# overridden by id (`tool-guardian`) in a later layer. A later layer REPLACES
+# the whole `config` value (no deep merge) -- restate every key you keep.
+#
+# The row references the package BY NAME so Node resolution finds the
+# installed code wherever pnpm put it; nothing here is a relative path.
+#
+# Precedence for every key: environment variable (the existing TOOL_GUARDIAN_*
+# names, so the .bat launchers keep working) > DSH settings namespace
+# `tool-guardian` > this row's config > schema default.
+- insert:
+    - id: tool-guardian
+      name: dsh-tool-guardian
+      inject: [tools]
+      config:
+        # Python interpreter for the bridge. '' = auto: $TOOL_GUARDIAN_PYTHON,
+        # then a .venv beside this package, then python / python3 on PATH.
+        python: ''
+        # mcpServers JSON file. '' = $TOOL_GUARDIAN_CONFIG, then
+        # tool_guardian.py's own search order (mcp.json, .mcp.json,
+        # ~/.tool-guardian/mcp.json).
+        configPath: ''
+        # Inline mcpServers block (same shape as the JSON file). Non-empty
+        # wins over configPath.
+        mcpServers: {}
+        # Router tools are advertised only once the backends report, so start at load.
+        eagerStart: true
+        startTimeoutMs: 90000
+        callTimeoutMs: 120000
+        skillsDirs: []
+        logPath: ''
+        # Output ladder: every tool's result is shaped before the model sees it
+        # (this is the dsh-trim role -- do not mount dsh-trim beside it).
+        ladder:
+          enabled: true
+          allTools: true
+          skipTools: [read, read_image, skill, todo_write]
+          options: {}          # overrides for tg_ladder.DEFAULTS
+        # { group: ["server", "server.tool", "server.prefix*"] }; {} = one group per server.
+        groups: {}
+        # Groups registered as direct native tools at load (their schemas ride every request).
+        activeGroups: []
+        allowRuntimeActivation: true
+        # A shell call doing a router tool's job: off | log | nudge | deny
+        bypass:
+          mode: nudge
+          shellTools: [bash, pwsh, run_code]
+          rules: []
+          minNameLength: 8
+        # Archive of full originals. '' = $TOOL_GUARDIAN_SPILL_DIR, then ~/.tool-guardian/spill
+        spillDir: ''
+        spillKeep: 500

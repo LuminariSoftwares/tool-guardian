@@ -11,3 +11,8 @@ mcp.json
 .mcp.json
 # logs
 *.log
+# node (DSH bundle dev install)
+node_modules/
+# local pre-edit backups
+_archive/
+*.backup-*

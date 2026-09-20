@@ -1,0 +1,66 @@
+{
+  "name": "dsh-tool-guardian",
+  "version": "0.3.0-alpha.1",
+  "description": "Tool Guardian as a native DeepSeek Harness (DSH) bundle: keeps tool definitions out of the context window by fronting your MCP servers behind a small native router. A bridge to the Python tool-guardian, not a rewrite.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "modules/tg_bridge.py",
+    "tool_guardian.py",
+    "tg_env.py",
+    "tg_ladder.py",
+    "tg_spill.py",
+    "tg_groups.py",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "check": "node --check index.js",
+    "selftest": "python modules/tg_bridge.py --selftest"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-tools": ">=0.1.2-alpha.2"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "dsh-bundle",
+    "deepseek-harness",
+    "mcp",
+    "context-window",
+    "tools",
+    "router",
+    "progressive-disclosure",
+    "local-llm",
+    "ollama"
+  ],
+  "license": "MIT",
+  "author": "LuminariSoftwares",
+  "homepage": "https://github.com/LuminariSoftwares/tool-guardian",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LuminariSoftwares/tool-guardian.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LuminariSoftwares/tool-guardian/issues"
+  }
+}

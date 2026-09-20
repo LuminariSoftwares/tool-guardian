@@ -88,7 +88,10 @@ def test_catalogue_all_and_one(router):
 
 def test_describe_tool(router):
     out = router.handle("describe_tool", {"server": "stub", "tool": "echo"})
-    schema = json.loads(out)
+    # 0.3.0: every result ends with an exact NEXT STEP; the schema is the part before it
+    body, _, nxt = out.partition("\n\nNEXT STEP: ")
+    assert nxt.startswith('call_tool(server="stub", tool="echo"')
+    schema = json.loads(body)
     assert schema["name"] == "echo"
     assert "text" in schema["inputSchema"]["properties"]
 

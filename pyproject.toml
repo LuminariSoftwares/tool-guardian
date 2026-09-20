@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tool-guardian"
-version = "0.1.0"
+version = "0.3.0"
 description = "An MCP router that keeps tool definitions from filling the context window — it fronts your MCP servers behind three generic tools and discovers the rest on demand."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -38,7 +38,7 @@ Issues = "https://github.com/LuminariSoftwares/tool-guardian/issues"
 tool-guardian = "tool_guardian:main"
 
 [tool.setuptools]
-py-modules = ["tool_guardian"]
+py-modules = ["tool_guardian", "tg_env", "tg_ladder", "tg_spill", "tg_groups"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
