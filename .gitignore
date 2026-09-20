@@ -16,3 +16,6 @@ node_modules/
 # local pre-edit backups
 _archive/
 *.backup-*
+
+# library: no lockfile
+pnpm-lock.yaml

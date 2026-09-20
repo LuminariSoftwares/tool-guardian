@@ -1,11 +1,35 @@
-# Tool Guardian
+<h1 align="center">Tool Guardian</h1>
 
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
+<p align="center"><b>Your MCP servers, for ~300 tokens instead of ~28,000 &mdash; and tool results that stop flooding the window.</b></p>
+
+<p align="center">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow.svg">
+  <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-blue.svg">
+  <img alt="Dependencies: none" src="https://img.shields.io/badge/python%20deps-none-2ea44f.svg">
+  <img alt="MCP server" src="https://img.shields.io/badge/MCP-server-6f42c1.svg">
+  <img alt="DeepSeek Harness bundle" src="https://img.shields.io/badge/DSH-native%20bundle-0969da.svg">
+</p>
+
+<p align="center">
+  <a href="#why-this-exists">Why</a> &middot;
+  <a href="#two-ways-to-run-it">Two ways to run it</a> &middot;
+  <a href="#install">Install</a> &middot;
+  <a href="#see-what-it-saves">Measure it</a> &middot;
+  <a href="#it-keeps-tool-results-small-too-030">Output ladder</a> &middot;
+  <a href="#native-deepseek-harness-dsh-bundle">DSH bundle</a> &middot;
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
 An MCP server that sits in front of your other MCP servers and exposes **three generic tools** instead of dozens of specific ones — discovering the rest **on demand** — so tool definitions stop eating your context window before the model reads a word.
 
 Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-guardian): **Context Guardian compacts the conversation before the window fills; Tool Guardian keeps the tools from filling it in the first place.** Two halves of the same problem.
+
+| | Without Tool Guardian | With it |
+|---|---|---|
+| 7 MCP servers on a 32K model | **28,689 tokens** of schemas on every request (87.6 % of the window) | **~300 tokens**; a schema is fetched only when the model asks |
+| A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
+| DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
+| A backend that fails to start | an empty tool list the model silently works around | `UNKNOWN` with the real error |
 
 ## Why this exists
 
@@ -35,6 +59,30 @@ The whole design rests on one behaviour: the model must **proactively call `list
 This was measured directly (2026) against a real studio stack: **gpt-oss:20b and qwen3-30b-a3b both bypassed the router** on ordinary tasks — even with the `NEXT STEP` nudge in every result *and* a dedicated router sub-agent priming them. They either treated a tool name as a shell command or scripted their way around it. The token math worked perfectly; the models just wouldn't drive it.
 
 So: `--selftest` proves the *saving* and that your backends start — it does **not** prove your model will use the router. **Test discovery→call with your actual model before committing.** If it won't reliably call these three tools, you're better off exposing a small *curated, visible* subset of servers than routing everything behind a catalogue the model never opens. The win here is real, but it's a win for models that ask.
+
+## Two ways to run it
+
+It is one repo and one Python router. Pick the front door that matches your harness — both stay supported.
+
+| | **MCP server** (any MCP client) | **Native DSH bundle** |
+|---|---|---|
+| Works with | Claude Code, Claude Desktop, OpenClaude, Cursor, anything that speaks MCP over stdio | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) |
+| Install | `pip install tool-guardian` | `dsh plugin --profile <name> add <path-to-this-checkout>` (after `pnpm install` in it) |
+| Hides MCP schemas behind 3 router tools | yes | yes, registered natively |
+| Output ladder on results | results of `call_tool` | **every** tool's result (`bash`, `grep`, `web_fetch`, ...) |
+| Tool groups with token prices | `list_groups_with_costs` | plus `activate_group`, and DSH's own built-in tools can be grouped and hidden too |
+| Notices a shell call doing a router tool's job | — | logs, nudges or denies it |
+| Configured by | `tool-guardian.json` + `TOOL_GUARDIAN_*` env | the `tool-guardian` patch row or DSH settings; the same env vars win |
+
+```mermaid
+flowchart LR
+    A["Your agent<br/>(Claude Code, DSH, any MCP client)"] -->|"3 tools, ~300 tokens"| B["Tool Guardian"]
+    B -->|"on demand"| C["filesystem"]
+    B -->|"on demand"| D["git"]
+    B -->|"on demand"| E["n8n, database, ..."]
+    B -. "big result" .-> F[("archive<br/>retrieve_spill")]
+    B -->|"shaped result"| A
+```
 
 ## Where it sits
 
@@ -185,6 +233,12 @@ The result-shaping design follows [dsh-trim](https://www.npmjs.com/package/dsh-t
 pip install -r requirements-dev.txt
 pytest
 ```
+
+## Acknowledgements
+
+- **[dsh-trim](https://www.npmjs.com/package/dsh-trim)** (shuistama, MIT) — the shape of the result-shaping listener: call `next()` first, fail open, archive before anything lossy. Tool Guardian's ladder is an independent Python implementation; no dsh-trim code is included.
+- **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — the bundle format and the `tools/pre-execute` / `tools/post-execute` seams the DSH side is built on.
+- The [Model Context Protocol](https://modelcontextprotocol.io) — the `mcpServers` config shape is theirs, used unchanged so your existing config works.
 
 ## License
 
