@@ -1,5 +1,9 @@
 # Changelog
 
+## dsh-tool-guardian 0.3.0-alpha.2 — published to npm (2026-09-20)
+
+Docs only: `dsh plugin --profile <name> add dsh-tool-guardian` now installs by name. No code change.
+
 ## 0.3.0 — output ladder, archive, group manifest, exact next steps; native DSH bundle
 
 The router now also keeps tool **results** from filling the window, and ships as a

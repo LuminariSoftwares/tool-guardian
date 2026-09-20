@@ -67,7 +67,7 @@ It is one repo and one Python router. Pick the front door that matches your harn
 | | **MCP server** (any MCP client) | **Native DSH bundle** |
 |---|---|---|
 | Works with | Claude Code, Claude Desktop, OpenClaude, Cursor, anything that speaks MCP over stdio | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) |
-| Install | `pip install tool-guardian` | `dsh plugin --profile <name> add <path-to-this-checkout>` (after `pnpm install` in it) |
+| Install | `pip install tool-guardian` | `dsh plugin --profile <name> add dsh-tool-guardian` |
 | Hides MCP schemas behind 3 router tools | yes | yes, registered natively |
 | Output ladder on results | results of `call_tool` | **every** tool's result (`bash`, `grep`, `web_fetch`, ...) |
 | Tool groups with token prices | `list_groups_with_costs` | plus `activate_group`, and DSH's own built-in tools can be grouped and hidden too |
