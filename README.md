@@ -29,7 +29,7 @@ Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-gua
 | 7 MCP servers on a 32K model | **28,689 tokens** of schemas on every request (87.6 % of the window) | **~300 tokens**; a schema is fetched only when the model asks |
 | A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
 | DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
-| A backend that fails to start | an empty tool list the model silently works around | `UNKNOWN` with the real error |
+| A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
 
 ## Why this exists
 
