@@ -27,11 +27,12 @@
  * MIT licensed.
  */
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import Schema from '@deepseek-ai/schemastery'
+import { checkForUpdate, defaultCacheFile } from './update_check.js'
 
 export const name = 'dsh-tool-guardian'
 
@@ -48,6 +49,9 @@ export const SETTINGS_NAMESPACE = 'tool-guardian'
  */
 const PACKAGE_ROOT = dirname(fileURLToPath(import.meta.url))
 const BRIDGE_SCRIPT = join(PACKAGE_ROOT, 'modules', 'tg_bridge.py')
+
+/** This plugin's own version, from the package.json beside this file. */
+const PKG_VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
 
 export const Config = Schema.object({
   python: Schema.string().default('')
@@ -696,4 +700,12 @@ export function apply(ctx, config) {
   const initial = resolveOptions(source())
   if (initial.allowRuntimeActivation && initial.builtinGroups.enabled) register(activateGroupTool())
   if (initial.eagerStart) boot()
+
+  // Fire-and-forget: the update notice is a courtesy line, never a reason to wait.
+  void checkForUpdate({
+    pkg: name,
+    current: PKG_VERSION,
+    cacheFile: defaultCacheFile(name),
+    log: (line) => ctx.logger.info(line),
+  }).catch(() => {})
 }

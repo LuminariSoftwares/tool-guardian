@@ -1,5 +1,13 @@
 # Changelog
 
+## dsh-tool-guardian 0.3.0-alpha.3 — update notice (2026-09-25)
+
+Once a day, in the background, the plugin asks the npm registry for a newer version and
+prints one line if there is one (a prerelease user hears about newer prereleases and
+stable releases; a stable user only about stable ones). Offline or failing checks are
+silent. Turn it off with `GUARDIAN_NO_UPDATE_CHECK=1` (`NO_UPDATE_NOTIFIER` and `CI` are
+honoured too).
+
 ## dsh-tool-guardian 0.3.0-alpha.2 — published to npm (2026-09-20)
 
 Docs only: `dsh plugin --profile <name> add dsh-tool-guardian` now installs by name. No code change.
