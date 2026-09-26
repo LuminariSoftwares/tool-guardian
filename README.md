@@ -11,12 +11,15 @@
 </p>
 
 <p align="center">
+  <a href="#install-both-deepseek-harness-about-5-minutes">Install both</a> &middot;
+  <a href="docs/first-5-minutes.md">First 5 minutes</a> &middot;
   <a href="#why-this-exists">Why</a> &middot;
   <a href="#two-ways-to-run-it">Two ways to run it</a> &middot;
   <a href="#install">Install</a> &middot;
   <a href="#see-what-it-saves">Measure it</a> &middot;
   <a href="#it-keeps-tool-results-small-too-030">Output ladder</a> &middot;
   <a href="#native-deepseek-harness-dsh-bundle">DSH bundle</a> &middot;
+  <a href="#compatibility">Compatibility</a> &middot;
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
@@ -30,6 +33,35 @@ Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-gua
 | A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
 | DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
 | A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
+
+<!-- shared "install both" block: keep identical to the Context Guardian README -->
+## Install both (DeepSeek Harness, about 5 minutes)
+
+Context Guardian and Tool Guardian are two halves of one problem: **Tool Guardian** keeps tool schemas and tool results from filling the window, and **Context Guardian** compacts the conversation before it fills and keeps what matters. They share no files and install separately. You need DSH 0.1.2-alpha.2 or later, Node.js `^22.19` or `>=24`, and Python 3.9+ on `PATH` for Tool Guardian's router.
+
+```bash
+# 1. Add both bundles to the DSH profile you use (`web` is the one `dsh web` uses)
+dsh plugin --profile web add dsh-tool-guardian
+dsh plugin --profile web add dsh-context-guardian
+
+# 2. Tool Guardian: copy in the MCP servers you already use (Claude Desktop / Cursor / Windsurf / .mcp.json), then check them
+cd ~/.dsh/profiles/web/node_modules/dsh-tool-guardian          # Windows: cd %USERPROFILE%\.dsh\profiles\web\node_modules\dsh-tool-guardian
+npm run setup                  # asks before it writes ~/.tool-guardian/mcp.json, then prints a doctor report
+
+# 3. Context Guardian: add its compaction row to your agent preset (a dry run until --apply)
+cd ~/.dsh/profiles/web/node_modules/dsh-context-guardian       # Windows: cd %USERPROFILE%\.dsh\profiles\web\node_modules\dsh-context-guardian
+npm run setup
+npm run setup -- --apply
+
+# 4. Start DSH and open a NEW session with the preset setup named
+dsh web
+```
+
+In that session, type `/guardian`. It shows Context Guardian's engine revision and your model's window. Then type `/toolguardian`. It shows each MCP server Tool Guardian started, the tokens the router saves on every request, and whether an update is out.
+
+Not on DSH? Context Guardian's proxy (`python context_guardian.py`, see its README) works with any OpenAI-compatible CLI. Tool Guardian runs as a plain MCP server for Claude Code, Cursor or any MCP client (see its README).
+
+New to it? [Your first 5 minutes](docs/first-5-minutes.md) goes from nothing installed to proof that your model uses the router, on DSH or Claude Code.
 
 ## Why this exists
 
@@ -60,7 +92,7 @@ The whole design rests on one behaviour: the model must **proactively call `list
 
 **Measurement 2 — 2026-09-19 and 2026-09-21, DeepSeek Harness, router tools registered natively by the [DSH bundle](#native-deepseek-harness-dsh-bundle).** The same model family (`qwen3:30b-a3b-instruct-2507`, 32K window) **used the router with no bypass.** 09-19, two sessions whose prompts named the tools: `list_capabilities` once, then `list_capabilities` ×8 → `call_tool(luminari-scripts, service_status)`. 09-21, one session, three ordinary prompts that named no tool ("Which of the studio's services are running right now?", "How many n8n workflows do we have, and which were edited most recently?", "What did we learn last time a bridge commit wrote stale bytes?"): the call log shows `list_capabilities(studio-jobs)` → `call_tool(studio-jobs, pipeline_status)`, then `call_tool(n8n, list)` (wrong name, `ok: false`) → `call_tool(n8n, n8n_list_workflows)` (`ok: true`, 12,963 chars shaped by the ladder) — the model corrected itself from the router's error — and **zero `bypass` rows**; the third prompt was answered with the companion plugin's `recall`/`search` plus built-in `glob`/`read`, which is the right tool, not a bypass. That is three sessions and one model: enough to show Measurement 1 is **not a verdict on these models**, not enough to promise yours will behave.
 
-So: `--selftest` proves the *saving* and that your backends start — it does **not** prove your model will drive the router in your harness. **Test discovery→call with your actual model and harness before committing**, and measure rather than guess: every router call is appended to `~/.tool-guardian/calls.jsonl` (`TOOL_GUARDIAN_CALL_LOG`), and under DSH a shell call that does a router tool's job is logged there as `kind: "bypass"` (and can be nudged or denied). A session's worth of that file tells you whether your model asks. If it won't, expose a small *curated, visible* subset of servers instead of routing everything behind a catalogue the model never opens.
+So: `--selftest` proves the *saving* and that your backends start — it does **not** prove your model will drive the router in your harness. **Test discovery→call with your actual model and harness before committing**, and measure rather than guess: every router call is appended to `~/.tool-guardian/calls.jsonl` (`TOOL_GUARDIAN_CALL_LOG`) with a session id, and under DSH a shell call that does a router tool's job is logged there as `kind: "bypass"` (and can be nudged or denied). After a few real tasks, **`/toolguardian bypass`** (DSH) or **`tool-guardian --bypass-summary`** (any client) reads that file for you: router calls, every bypass with the exact `call_tool(...)` it should have been, and sessions that never touched the router. Over plain MCP, see [bypass detection and its limits](#bypass-detection-over-plain-mcp-and-its-limits). If it won't, expose a small *curated, visible* subset of servers instead of routing everything behind a catalogue the model never opens.
 
 ## Two ways to run it
 
@@ -103,6 +135,8 @@ pip install tool-guardian
 ```
 
 Pure standard library — nothing else to install.
+
+> PyPI and npm now ship the same code: `pip install tool-guardian` (0.3.0+) for the MCP server, `dsh-tool-guardian` on npm for DSH.
 
 ## Configure
 
@@ -215,7 +249,9 @@ Everything your servers can do is still reachable — the model just discovers i
 tool-guardian --selftest
 ```
 
-Starts your configured servers, prints the catalogue, and reports the tokens the three router tools cost versus loading every server's tools directly — e.g. *"router tools cost ~310 tokens vs ~28,700 for the full set behind them → ~28,390 freed on every request."*
+Starts your configured servers, prints the catalogue, and reports the tokens the three router tools cost versus loading every server's tools directly — e.g. *"router tools cost ~310 tokens vs ~28,700 for the full set behind them → ~28,390 freed on every request."* It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
+
+Under DSH, type **`/toolguardian`** in a session for the same report from the running plugin: each server's status and tool count, the tokens freed on every request, active groups, ladder and bypass counters, and the update line.
 
 ## It keeps tool *results* small too (0.3.0)
 
@@ -245,7 +281,44 @@ dsh --profile <name> --dump-config                        # shows a "# == dsh-to
 
 Inside DSH it (1) registers the router tools **natively**, so your MCP backends' schemas never enter a request unless you activate their group (`activeGroups`, or the `activate_group` tool, which quotes the token cost first); (2) runs the output ladder on **every** tool's result — `bash`, `grep`, `web_fetch`, all of them — through `tools/post-execute`, so do not mount `dsh-trim` beside it; (3) notices shell calls that do a router tool's job and logs, nudges (default) or denies them (`bypass.mode`). Configure it in the profile's `cordis.patch.yml` by overriding the `tool-guardian` row, or through the DSH settings namespace `tool-guardian`; the existing `TOOL_GUARDIAN_*` environment variables win over both. Python is found at `$TOOL_GUARDIAN_PYTHON`, then a `.venv` beside the package, then `python`/`python3` on `PATH` (3.9+, standard library only).
 
+**Setup and checks.** `npm run setup` in the plugin folder finds Python, imports the MCP servers you already use into `~/.tool-guardian/mcp.json` (asking first) and runs the doctor; the bridge finds that file by itself, so no preset or YAML is edited. In a session, `/toolguardian` is the selftest, `/toolguardian bypass` (or `bypass last`, `bypass 24h`) the bypass summary, and `/toolguardian restore` re-loads the previous session's groups.
+
+**Groups across sessions.** Each `activate_group` is remembered in `~/.tool-guardian/state.json` (`TOOL_GUARDIAN_STATE`; empty disables). The next session is *offered* those groups — a log line, a line in `list_groups_with_costs`, the `restore_groups` tool and `/toolguardian restore` — and never loads them on its own, because every loaded group costs tokens on every request.
+
+**Settings.** There is no card for Tool Guardian in the DSH web UI (DSH draws cards only for plugins that ship a browser bundle); the settings live under `tool-guardian:` in `~/.dsh/settings.yaml` and apply live. [docs/dsh-settings.md](docs/dsh-settings.md) shows every field as a card and the exact precedence order, proven line by line from the code.
+
 The result-shaping design follows [dsh-trim](https://www.npmjs.com/package/dsh-trim) (shuistama, MIT): `next()` first, fail open, archive before anything lossy.
+
+## Bypass detection over plain MCP (and its limits)
+
+Under DSH the plugin sees every shell call before it runs, so a bypass is logged, nudged or denied. **A plain MCP server cannot do that**: it only sees calls addressed to it, never the client's own `Bash`. What the server itself can see, and `tool-guardian --bypass-summary` reports:
+
+- a session that **never called the router** (a `kind: "session"` row is written when a client connects);
+- a session that **looked tools up but never called `call_tool`** — the pattern Measurement 1 recorded.
+
+For real bypass detection in **Claude Code**, add its `PreToolUse` hook, which matches shell commands against the router's saved tool names and writes to the same call log (names only, never the command text; any error means "allow"):
+
+```json
+{ "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "tool-guardian --hook-pretooluse" } ] } ] } }
+```
+
+`--mode deny` / `TOOL_GUARDIAN_HOOK_MODE=deny` blocks the call and tells Claude which `call_tool(...)` to use. The hook is built to Claude Code's documented `PreToolUse` input and output and tested against those payloads, not yet in a live Claude Code session. Other clients without a pre-tool hook get the two server-side signals only.
+
+## Compatibility
+
+| | Tested on | Expected to work | Notes |
+|---|---|---|---|
+| DeepSeek Harness (bundle) | 0.1.2-alpha.2, Windows 11 | later 0.1.x | peer `@deepseek-ai/dsh-tools >=0.1.2-alpha.2`, `@deepseek-ai/cordis ^4.0.2`; `/toolguardian` needs DSH's command registry (present in 0.1.2-alpha.2) |
+| Node.js (bundle, `npm run setup`) | 22.x on Windows 11 and Linux | `^22.19.0` or `>=24` | the `engines` field |
+| Python (router, bridge, setup) | 3.11 on Windows 11 and Linux | 3.9 – 3.12 | standard library only; 3.9 / 3.10 are checked by syntax, not by a test run |
+| Operating system | Windows 11; Linux (test suite) | macOS | macOS is untested |
+| MCP servers behind the router | stdio | stdio | HTTP/SSE (`"url"`) servers are reported `UNSUPPORTED` |
+| Clients (MCP server path) | OpenClaude | Claude Code, Claude Desktop, Cursor, any stdio MCP client | the Claude Code bypass hook is tested against its documented payloads only |
+| Models | `qwen3:30b-a3b-instruct-2507` under DSH drove the router (3 sessions) | any model that calls tools | gpt-oss:20b and qwen3-30b-a3b bypassed it under OpenClaude — see [Model requirement](#model-requirement-read-this-before-you-switch) |
+| Model backend | Ollama (via DSH / OpenClaude) | any | the router never talks to the model backend; only the model's tool-calling behaviour matters |
+| Companion | dsh-context-guardian 0.1.0-alpha.5 | | the two share no files and install separately |
+
+"Tested on" means this repo's test suites plus daily use on the machine it was built on. "Expected to work" is not tested — please open an issue if it does not work for you.
 
 ## Design notes (the parts that matter)
 
@@ -257,12 +330,15 @@ The result-shaping design follows [dsh-trim](https://www.npmjs.com/package/dsh-t
 
 - **stdio servers only.** An HTTP/SSE server (a `"url"` entry) is reported `UNSUPPORTED` — load it directly rather than through here.
 - It does not merge or rename tools; it proxies them faithfully. `call_tool(server, tool, args)` reaches the real tool unchanged.
+- Over plain MCP it cannot see a client's shell calls; see [bypass detection and its limits](#bypass-detection-over-plain-mcp-and-its-limits).
+- It has no card in the DSH web UI; configure it in `~/.dsh/settings.yaml` ([docs/dsh-settings.md](docs/dsh-settings.md)).
 
 ## Development
 
 ```bash
 pip install -r requirements-dev.txt
-pytest
+pytest                                  # includes the contract probes in tests/probes/
+pnpm install && node tests/dsh_smoke.mjs && node tests/probe_dsh_mvp.mjs && node tests/probe_setup.mjs
 ```
 
 ## Acknowledgements

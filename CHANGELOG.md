@@ -1,5 +1,47 @@
 # Changelog
 
+## dsh-tool-guardian 0.3.0-alpha.5 / PyPI tool-guardian 0.3.0 (2026-09-26)
+
+**Know what it is doing without opening a log file.** Under DSH, type `/toolguardian` in a session. It is the
+bundle's selftest: every MCP server with its status and tool count, the tokens the router frees on every request,
+active groups, ladder and bypass counters, and one `update:` line. `/toolguardian bypass` (`bypass last`,
+`bypass 24h`) summarises router calls against shell calls that did a router tool's job, with the exact
+`call_tool(...)` for each. The CLI does the same for any client: `tool-guardian --bypass-summary [--session last|all|<id>] [--since-hours N]`.
+
+**An update line where you look first.** `tool-guardian --selftest`, `tool-guardian-setup doctor` and
+`/toolguardian` each end with one `update:` line: a newer release, "none", or "could not check". npm installs
+check npm and share the plugin's once-a-day cache. pip installs check PyPI. The check is silent offline,
+and `GUARDIAN_NO_UPDATE_CHECK=1` / `NO_UPDATE_NOTIFIER` / `CI` turn it off. New module: `tg_update.py`.
+
+**Groups carry over, offered and never forced.** Each `activate_group` is recorded in `~/.tool-guardian/state.json`
+(`TOOL_GUARDIAN_STATE`; empty disables). The next DSH session names those groups in its log and in
+`list_groups_with_costs`, and loads them only when asked, through the new `restore_groups` tool or `/toolguardian restore`.
+New module: `tg_state.py`.
+
+**Bypass signals on the plain MCP path, with honest limits.** A plain MCP server cannot see a client's own
+shell calls. Every call-log row now carries a session id, and a client connecting writes a `kind: "session"`
+row, so the summary can name sessions that never called the router and sessions that looked tools up but
+never called `call_tool`. For real detection in Claude Code there is an opt-in `PreToolUse` hook,
+`tool-guardian --hook-pretooluse` (`--mode log|deny`). It matches shell commands against the tool names the
+router saved at its last start. It logs names only, never the command text. It never blocks a shell call
+because of its own error. It is tested against Claude Code's documented payloads, not yet in a live session.
+
+**One setup command for DSH.** `npm run setup` in the plugin folder finds Python like the plugin does, runs
+`tg_setup.py import`, then `doctor`, and prints the DSH next step. No preset or YAML edit is needed: the bundle's
+patch already adds its row to the profile, and the bridge finds `~/.tool-guardian/mcp.json` by itself.
+
+**Docs.** The README opens with the shared "Install both" block (Tool Guardian + Context Guardian). It now has
+a compatibility matrix and a section on bypass detection over plain MCP.
+[docs/first-5-minutes.md](docs/first-5-minutes.md) walks from nothing installed to a proven router call on
+DSH or Claude Code. [docs/dsh-settings.md](docs/dsh-settings.md) shows the settings section as an ASCII card
+(DSH draws no web card for a plugin without a browser bundle) and the precedence order proven from the code.
+It covers `mcpServers` beating `TOOL_GUARDIAN_CONFIG`, settings.yaml merging into the patch row, and the
+`toolGuardian` block in mcp.json sitting below DSH values. The README notes that PyPI still has 0.1.0.
+
+Tests: contract probes `tests/probes/probe_tg_state.py` (19) and `probe_tg_update.py` (14), `tests/probe_dsh_mvp.mjs`
+(21), `tests/probe_setup.mjs` (9) and `tests/test_mvp_wiring.py`. The test suite no longer touches the real
+`~/.tool-guardian/state.json` or the network.
+
 ## dsh-tool-guardian 0.3.0-alpha.4 (2026-09-25)
 
 **Setup you don't have to hand-write.** `tool-guardian-setup import` copies the MCP servers you

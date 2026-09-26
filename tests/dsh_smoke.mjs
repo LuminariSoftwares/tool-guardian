@@ -43,6 +43,8 @@ for line in sys.stdin:
 const tmp = mkdtempSync(join(tmpdir(), 'tg-smoke-'))
 writeFileSync(join(tmp, 'stub_server.py'), STUB, 'utf8')
 process.env.TOOL_GUARDIAN_CALL_LOG = join(tmp, 'calls.jsonl')
+process.env.TOOL_GUARDIAN_STATE = join(tmp, 'state.json')   // never the operator's real state.json
+process.env.GUARDIAN_NO_UPDATE_CHECK = '1'
 delete process.env.TOOL_GUARDIAN_CONFIG
 
 const base = plugin.Config({})

@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parent.parent
 PROBES = Path(__file__).resolve().parent / "probes"
 
 
-@pytest.mark.parametrize("module,minimum", [("tg_ladder", 15), ("tg_spill", 10), ("tg_groups", 7)])
+@pytest.mark.parametrize("module,minimum", [("tg_ladder", 15), ("tg_spill", 10), ("tg_groups", 7),
+                                            ("tg_state", 19), ("tg_update", 14)])
 def test_contract_probe(module, minimum):
     if not (ROOT / (module + ".py")).is_file():
         pytest.skip(module + ".py is not in the repo yet")
@@ -24,7 +25,7 @@ def test_contract_probe(module, minimum):
     assert total >= minimum and failed == 0 and passed == total and r.returncode == 0, r.stdout
 
 
-@pytest.mark.parametrize("module", ["tg_ladder", "tg_spill", "tg_groups", "tg_setup"])
+@pytest.mark.parametrize("module", ["tg_ladder", "tg_spill", "tg_groups", "tg_setup", "tg_state", "tg_update"])
 def test_module_selftest_count_line(module):
     if not (ROOT / (module + ".py")).is_file():
         pytest.skip(module + ".py is not in the repo yet")

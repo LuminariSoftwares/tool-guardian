@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-guardian",
-  "version": "0.3.0-alpha.4",
+  "version": "0.3.0-alpha.5",
   "description": "Tool Guardian as a native DeepSeek Harness (DSH) bundle: keeps tool definitions out of the context window by fronting your MCP servers behind a small native router. A bridge to the Python tool-guardian, not a rewrite.",
   "type": "module",
   "main": "index.js",
@@ -11,6 +11,7 @@
   "files": [
     "index.js",
     "update_check.js",
+    "setup.mjs",
     "cordis.patch.yml",
     "modules/tg_bridge.py",
     "tool_guardian.py",
@@ -19,6 +20,8 @@
     "tg_spill.py",
     "tg_groups.py",
     "tg_setup.py",
+    "tg_state.py",
+    "tg_update.py",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -29,7 +32,8 @@
     }
   },
   "scripts": {
-    "check": "node --check index.js",
+    "check": "node --check index.js && node --check setup.mjs",
+    "setup": "node setup.mjs",
     "selftest": "python modules/tg_bridge.py --selftest"
   },
   "engines": {

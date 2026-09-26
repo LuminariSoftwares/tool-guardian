@@ -11,6 +11,9 @@ instead of dozens of specific ones, discovering the rest on demand:
     tool-guardian                      run as an MCP server (stdio)
     tool-guardian --selftest           start the backends, print the token saving
     tool-guardian --config path.json   use a specific mcpServers config
+    tool-guardian --bypass-summary     router use vs shell bypasses, from the call log
+    tool-guardian --hook-pretooluse    Claude Code PreToolUse hook: logs (or denies) shell
+                                       calls that do a router tool's job
 
 WHY THIS EXISTS
     MCP tool definitions are re-sent on EVERY request, whether the model touches
@@ -81,6 +84,8 @@ def _optional(module: str):
 tg_ladder = _optional("tg_ladder")    # deterministic compression of tool results
 tg_spill = _optional("tg_spill")      # archive of the full original behind every lossy result
 tg_groups = _optional("tg_groups")    # tool groups priced in context tokens
+tg_state = _optional("tg_state")      # session ids, state.json, call-log summary, Claude Code hook
+tg_update = _optional("tg_update")    # the one "update available" line
 
 __version__ = "0.3.0"
 
@@ -480,6 +485,8 @@ class Router:
         self._spill = None
         self.stats = {"calls": 0, "errors": 0, "shaped": 0, "spilled": 0,
                       "original_chars": 0, "final_chars": 0}
+        # Every call-log row carries this, so "the last session" is a question the log can answer.
+        self.session_id = tg_state.new_session_id() if tg_state is not None else ""
 
     def start(self, servers: dict = None) -> None:
         """Start every backend AT ONCE. Backend.start() never raises (a failure becomes
@@ -495,6 +502,30 @@ class Router:
             threads.append(t)
         for t in threads:
             t.join()
+        self.remember_catalogue()
+
+    def remember_catalogue(self) -> None:
+        """Tool names per live server into state.json: the Claude Code hook matches shell
+        commands against them without starting a single backend. Best effort."""
+        if tg_state is None:
+            return
+        path = tg_state.default_state_path()
+        if not path:
+            return
+        try:
+            tg_state.record_catalogue(path, {n: [t.get("name", "") for t in b.tools]
+                                             for n, b in self.backends.items() if b.status == "ok"})
+        except Exception as exc:  # noqa: BLE001
+            log("state.json not updated: %s" % exc)
+
+    def log_session_start(self, harness: str, client: str = "") -> None:
+        """One `kind: session` row. A session with this row and no router row is one
+        where the model never used the router -- the one bypass signal a plain MCP
+        server can see on its own."""
+        entry = {"kind": "session", "event": "start", "harness": harness, "ok": True}
+        if client:
+            entry["client"] = client[:80]
+        self.log_call(entry)
 
     def catalogue(self, server: str = "") -> str:
         if server:
@@ -608,10 +639,13 @@ class Router:
         self.stats["final_chars"] += int(entry.get("final_chars") or 0)
         if not CALL_LOG:
             return
+        row = dict(entry, ts=time.strftime("%Y-%m-%dT%H:%M:%S"))
+        if self.session_id and not row.get("session"):
+            row["session"] = self.session_id
         try:
             os.makedirs(os.path.dirname(CALL_LOG) or ".", exist_ok=True)
             with open(CALL_LOG, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(dict(entry, ts=time.strftime("%Y-%m-%dT%H:%M:%S"))) + "\n")
+                fh.write(json.dumps(row) + "\n")
         except OSError:
             pass
 
@@ -838,6 +872,8 @@ def serve(router: Router) -> int:
             continue
         method, mid = msg.get("method"), msg.get("id")
         if method == "initialize":
+            client = ((msg.get("params") or {}).get("clientInfo") or {}).get("name") or ""
+            router.log_session_start("mcp", str(client))
             reply = {"protocolVersion": PROTOCOL, "capabilities": {"tools": {}},
                      "serverInfo": {"name": "tool-guardian", "version": __version__}}
         elif method == "tools/list":
@@ -891,8 +927,48 @@ def selftest(config: str = "") -> int:
           "\nNOT prove your model will call list_capabilities/call_tool -- smaller"
           "\nlocal models often bypass the router and use built-in tools instead."
           "\nVerify discovery->call with your real model first. See the README's"
-          "\n'Model requirement' section.")
+          "\n'Model requirement' section. After a few real tasks,"
+          "\n`tool-guardian --bypass-summary` shows whether it did.")
+    print("\n" + update_line())
     return 0 if ok else 1
+
+
+def update_line() -> str:
+    """One line: is there a newer release? Offline, opted out or tg_update missing all say so."""
+    if tg_update is None:
+        return "update: check unavailable (tg_update.py is not beside tool_guardian.py)"
+    try:
+        return tg_update.status_line(tg_update.check(tg_update.install_kind(py_version=__version__)))
+    except Exception:  # noqa: BLE001  (a courtesy line never fails a selftest)
+        return "update: could not check -- you have %s" % __version__
+
+
+def bypass_summary(session: str = "", since_hours: float = 24.0, log_path: str = "") -> str:
+    """Router use vs shell bypasses from the call log. Default: the last 24 hours."""
+    if tg_state is None:
+        return "bypass summary unavailable: tg_state.py is not beside tool_guardian.py"
+    path = log_path or CALL_LOG
+    if not path:
+        return "the call log is off (TOOL_GUARDIAN_CALL_LOG is empty) -- nothing to summarise"
+    rows = tg_state.read_calls(path)
+    if session == "last":
+        session = tg_state.last_session(rows)
+    if session and session != "all":
+        summary = tg_state.summarize(rows, session=session)
+    elif session == "all":
+        summary = tg_state.summarize(rows)
+    else:
+        since = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - since_hours * 3600))
+        summary = tg_state.summarize(rows, since=since)
+    return "call log: %s\n%s" % (path, tg_state.render_bypass_summary(summary))
+
+
+def hook_pretooluse(stdin_text: str, mode: str = "") -> tuple:
+    """Claude Code PreToolUse hook. Never fails the user's shell call: any problem is exit 0."""
+    if tg_state is None:
+        return 0, ""
+    mode = mode or os.environ.get("TOOL_GUARDIAN_HOOK_MODE", "log")
+    return tg_state.run_hook(stdin_text, log_path=CALL_LOG, mode=mode)
 
 
 def main(argv=None) -> int:
@@ -902,10 +978,32 @@ def main(argv=None) -> int:
     ap.add_argument("--selftest", action="store_true",
                     help="start backends, print the token saving, exit")
     ap.add_argument("--version", action="store_true")
+    ap.add_argument("--bypass-summary", dest="bypass_summary", action="store_true",
+                    help="router calls vs shell bypasses from the call log, then exit")
+    ap.add_argument("--session", default="",
+                    help="with --bypass-summary: a session id, 'last' or 'all' (default: last 24 hours)")
+    ap.add_argument("--since-hours", dest="since_hours", type=float, default=24.0,
+                    help="with --bypass-summary: how far back to look (default 24)")
+    ap.add_argument("--hook-pretooluse", dest="hook", action="store_true",
+                    help="Claude Code PreToolUse hook: read the hook JSON on stdin, log a bypass")
+    ap.add_argument("--mode", default="", choices=["", "log", "deny"],
+                    help="with --hook-pretooluse: log (default) or deny ($TOOL_GUARDIAN_HOOK_MODE)")
     ap.add_argument("--skills-report", dest="skills_report", action="store_true",
                     help="print the token saving for skills configured in "
                          "TOOL_GUARDIAN_SKILLS and exit")
     a = ap.parse_args(argv)
+    if a.hook:
+        # First, and before .env loading: a hook runs on every shell call and must stay fast.
+        try:
+            code, out = hook_pretooluse(sys.stdin.read(), a.mode)
+        except Exception:  # noqa: BLE001  (never break the user's shell)
+            code, out = 0, ""
+        if out:
+            print(out)
+        return code
+    if a.bypass_summary:
+        print(bypass_summary(a.session, a.since_hours))
+        return 0
     if a.skills_report:
         skills_report(scan_skills(SKILLS_DIRS))
         return 0

@@ -702,6 +702,8 @@ def _cmd_doctor(argv) -> int:
     ap.add_argument("--json", action="store_true", help="print findings as JSON")
     a = ap.parse_args(argv)
     findings = doctor(explicit=a.config)
+    # The update line is information, not a finding: it never changes the counts or the exit code.
+    update = tool_guardian.update_line()
     if a.json:
         print(json.dumps(findings, indent=2))
         return 1 if any(f["level"] == "error" for f in findings) else 0
@@ -710,6 +712,7 @@ def _cmd_doctor(argv) -> int:
     errors = sum(1 for f in findings if f["level"] == "error")
     _print_findings(findings)
     print("doctor: %d ok, %d warnings, %d errors" % (ok, warns, errors))
+    print(update)
     return 1 if errors else 0
 
 
@@ -743,11 +746,13 @@ def main(argv=None) -> int:
 def _hermetic():
     """Point HOME, cwd, and TOOL_GUARDIAN_CONFIG at a throwaway empty dir so a
     check can never read the real home, PATH, or a stray mcp.json. Restored on exit."""
-    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE", "TOOL_GUARDIAN_CONFIG")}
+    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE", "TOOL_GUARDIAN_CONFIG",
+                                             "GUARDIAN_NO_UPDATE_CHECK")}
     cwd = os.getcwd()
     tmp = tempfile.mkdtemp()
     try:
         os.environ["HOME"] = os.environ["USERPROFILE"] = tmp
+        os.environ["GUARDIAN_NO_UPDATE_CHECK"] = "1"   # doctor's update line must not reach the network
         os.environ.pop("TOOL_GUARDIAN_CONFIG", None)
         os.chdir(tmp)
         yield Path(tmp)
@@ -941,6 +946,14 @@ def _check_doctor_all_good():
         errors = [f for f in findings if f["level"] == "error"]
         assert not errors, "all-good config should have 0 errors, got %s" % errors
         assert any(f["level"] == "ok" and "no .env" in f["what"] for f in findings), findings
+
+
+def _check_doctor_cli_ends_with_update_line_offline():
+    with _hermetic() as root:
+        cfg = _write(root / "mcp.json", {"mcpServers": {}})
+        rc, out = _capture(["doctor", "--config", str(cfg)])
+        last = out.strip().splitlines()[-1]
+        assert rc == 0 and last.startswith("update:") and "check off" in last, out
 
 
 def _check_import_yes():
@@ -1216,6 +1229,7 @@ CHECKS = [
     ("doctor lists-itself error", _check_doctor_lists_itself),
     ("doctor unset ${VAR} warn", _check_doctor_unset_var),
     ("doctor all-good has 0 errors", _check_doctor_all_good),
+    ("doctor CLI ends with the update line, offline", _check_doctor_cli_ends_with_update_line_offline),
     ("import --yes writes and prints the snippet", _check_import_yes),
     ("import declined (n) writes nothing", _check_import_no_prompt_writes_nothing),
     ("add_writes_target_and_keeps_other_keys", _check_add_writes_target_and_keeps_other_keys),

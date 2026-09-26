@@ -12,7 +12,12 @@
  *     trim's design -- next() first, fail open, spill before anything lossy --
  *     is followed here, credit: shuistama/dsh-trim, MIT);
  *   - watches shell tools on `tools/pre-execute` for calls that bypass the
- *     router, and logs / nudges / denies them.
+ *     router, and logs / nudges / denies them;
+ *   - remembers which groups a session activated (~/.tool-guardian/state.json)
+ *     and OFFERS them to the next session through `restore_groups` -- never
+ *     activates them by itself;
+ *   - adds the `/toolguardian` command: a selftest in the conversation (backends,
+ *     token saving, update line), `/toolguardian bypass` and `/toolguardian restore`.
  *
  * A bridge, not a rewrite: routing stays in tool_guardian.py. This plugin
  * spawns modules/tg_bridge.py (a private NDJSON protocol, NOT MCP), which
@@ -21,6 +26,9 @@
  * Written against DSH 0.1.2-alpha.2 (source read 2026-09-19):
  *   - tool registry:  packages/core/tools        -> ctx.tools.register(defineTool({...}))
  *   - settings:       packages/settings/settings -> ctx.settings.installSection(owner, ns, schema, entry, hooks)
+ *   - commands:       packages/interaction/commands -> ctx.commands.register({ name, description, input, handler })
+ *                     (handler returns { kind: 'success' | 'error', text }; without `input` DSH treats the
+ *                     command as argument-free and sends "/toolguardian bypass" to the MODEL)
  *                     (the removed installSettingsSection/settingsNamespace helpers are NOT used)
  *   - bundle format:  docs/user/develop/basic/publish.md
  *
@@ -402,6 +410,9 @@ export function apply(ctx, config) {
   const activeGroups = new Set()
   const nudges = new Map()      // callId -> { server, tool } awaiting its post-execute
   const masks = new Map()       // agent -> { hidden: Set<group>, dispose, denied: string[] }
+  let session = ''              // the Python router's session id (every call-log row carries it)
+  let restoreOffer = null       // { session, updated, groups } from the previous session, or null
+  let bootError = ''            // why the last start failed, for /toolguardian
 
   /** (Re)apply one agent's mask: every tool of every still-hidden group is denied for it. */
   const applyMask = (agent, hidden) => {
@@ -466,7 +477,7 @@ export function apply(ctx, config) {
     execute: async (args, exec) => {
       const { text } = await getBridge().request('call', { name: spec.name, args: args ?? {} })
       if (spec.name !== 'list_groups_with_costs') return text
-      const extra = builtinSection(exec?.agent)
+      const extra = builtinSection(exec?.agent) + restoreLine()
       if (extra === '') return text
       const at = text.lastIndexOf('NEXT STEP:')
       return at < 0 ? `${text}\n${extra}` : `${text.slice(0, at)}${extra.trimStart()}\n${text.slice(at)}`
@@ -532,10 +543,78 @@ export function apply(ctx, config) {
       try {
         const added = await activateGroup(group)
         if (added.names.length === 0) return `group "${group}" has no reachable tools.\n\nNEXT STEP: list_groups_with_costs()`
+        recordActivation(group)
         return `group "${group}" is active: ${added.names.length} tools, ~${added.cost} tokens added to every request from now on.\n`
           + `${added.names.join(', ')}\n\nNEXT STEP: call ${added.names[0]} (or another of the tools above) directly.`
       } catch (error) {
         return `activate_group failed: ${error.message}\n\nNEXT STEP: list_groups_with_costs()`
+      }
+    },
+  })
+
+  /** Remember a runtime activation for the next session's restore offer. Never blocks, never throws. */
+  const recordActivation = (group) => {
+    bridge?.request('activated', { group }, 5000).catch(() => {})
+  }
+
+  /** The restore offer as one line for list_groups_with_costs; '' when there is nothing to offer. */
+  const restoreLine = () => {
+    const pending = (restoreOffer?.groups ?? []).filter(group => !activeGroups.has(group))
+    if (pending.length === 0 || !disposers.has('restore_groups')) return ''
+    return `\nLast session used: ${pending.join(', ')} -- restore_groups() loads them again (optional).\n`
+  }
+
+  /**
+   * Re-activate the previous session's groups -- only when the model or the user asks.
+   * @returns the tool/command text
+   */
+  const restoreGroups = async () => {
+    const offer = restoreOffer ?? (await getBridge().request('restore_offer', {}, 10000)).offer
+    const groups = offer?.groups ?? []
+    if (groups.length === 0) {
+      return 'nothing to restore: no earlier session activated a group.\n\nNEXT STEP: list_groups_with_costs()'
+    }
+    const loaded = []
+    const skipped = []
+    let cost = 0
+    for (const group of groups) {
+      if (activeGroups.has(group)) {
+        skipped.push(`${group} (already active)`)
+        continue
+      }
+      try {
+        const added = await activateGroup(group)
+        if (added.names.length === 0) {
+          skipped.push(`${group} (no reachable tools now)`)
+          continue
+        }
+        recordActivation(group)
+        loaded.push(`${group} (${added.names.length} tools)`)
+        cost += added.cost
+      } catch (error) {
+        skipped.push(`${group} (${error.message})`)
+      }
+    }
+    const lines = [`restore_groups: the session of ${offer.updated ?? 'earlier'} used ${groups.join(', ')}.`]
+    if (loaded.length > 0) lines.push(`loaded: ${loaded.join(', ')} -- ~${cost} tokens added to every request from now on.`)
+    if (skipped.length > 0) lines.push(`skipped: ${skipped.join(', ')}.`)
+    lines.push('', loaded.length > 0
+      ? 'NEXT STEP: call the tools you need directly (names start with tg__).'
+      : 'NEXT STEP: list_groups_with_costs()')
+    return lines.join('\n')
+  }
+
+  const restoreGroupsDefinition = () => ({
+    name: 'restore_groups',
+    description: 'Load the tool groups the PREVIOUS session activated (list_groups_with_costs shows them and their cost). '
+      + 'Optional: call it only when this task needs the same tools.',
+    parameters: { type: 'object', properties: {} },
+    output: TEXT_OUTPUT,
+    execute: async () => {
+      try {
+        return await restoreGroups()
+      } catch (error) {
+        return `restore_groups failed: ${error.message}\n\nNEXT STEP: list_groups_with_costs()`
       }
     },
   })
@@ -549,12 +628,16 @@ export function apply(ctx, config) {
     ctx.logger.info(`tool-guardian bridge up: tool_guardian ${hello.tool_guardian}, python ${hello.python} (${hello.executable})`)
     const status = await live.startRouter()
     if (mine !== generation) return
+    session = typeof status.session === 'string' ? status.session : ''
     const rows = Object.entries(status.backends).map(([id, b]) => `${id}=${b.status}(${b.tools})`)
     ctx.logger.info(`tool-guardian backends: ${rows.join(' ') || 'none configured'}`)
     const { tools } = await live.request('tools')
     if (mine !== generation) return
     for (const spec of tools) register(routerTool(spec))
-    if (options.allowRuntimeActivation) register(activateGroupTool())
+    if (options.allowRuntimeActivation) {
+      register(activateGroupTool())
+      register(restoreGroupsDefinition())
+    }
     let groups = []
     try {
       groups = (await live.request('groups')).groups
@@ -572,12 +655,25 @@ export function apply(ctx, config) {
       }
     }
     ready = true
+    bootError = ''
     ctx.logger.info(`tool-guardian ready: ${ownTools.size} native tools registered; ladder ${options.ladder.enabled ? 'on' : 'off'}; bypass mode ${options.bypass.mode}`)
+    // Offered, never forced: the previous session's groups are named, not loaded.
+    try {
+      restoreOffer = (await live.request('restore_offer', {}, 10000)).offer ?? null
+    } catch {
+      restoreOffer = null
+    }
+    if (mine !== generation) return
+    const pending = (restoreOffer?.groups ?? []).filter(group => !activeGroups.has(group))
+    if (pending.length > 0 && options.allowRuntimeActivation) {
+      ctx.logger.info(`tool-guardian: last session used groups ${pending.join(', ')} -- restore_groups() or /toolguardian restore loads them (not loaded automatically)`)
+    }
   }
 
   const boot = () => {
     startRouter().catch((error) => {
       // Loud, and nothing registered: a dead router must not look like an empty tool list.
+      bootError = error.message
       ctx.logger.error(`tool-guardian failed to start: ${error.message}`)
     })
   }
@@ -681,6 +777,97 @@ export function apply(ctx, config) {
         source = current
       },
       onChange: recycleIfChanged,
+    })
+  })
+
+  // ── /toolguardian: the selftest, bypass summary and restore, for the human ──
+  const USAGE = 'usage: /toolguardian [selftest] | /toolguardian bypass [last | 24h] | /toolguardian restore'
+
+  /** The DSH-side selftest: what `tool-guardian --selftest` proves, from the live bridge. */
+  const selftestReport = async () => {
+    const live = bridge
+    if (live === null || !ready) {
+      const why = bootError === '' ? 'still starting -- try again in a few seconds' : `failed to start: ${bootError}`
+      return { kind: 'error', text: `tool-guardian ${PKG_VERSION}: ${why}.\nThe DSH log has the detail (search "tool-guardian").` }
+    }
+    const options = live.options
+    const lines = []
+    const hello = await live.request('hello', {}, 15000)
+    lines.push(`tool-guardian ${PKG_VERSION} (router ${hello.tool_guardian}, python ${hello.python})`)
+    const status = await live.startRouter()
+    const backends = Object.entries(status.backends ?? {})
+    const up = backends.filter(([, b]) => b.status === 'ok')
+    lines.push(`backends: ${up.length} up, ${backends.length - up.length} down`)
+    for (const [id, b] of backends) {
+      lines.push(`  ${id.padEnd(18)} ${String(b.status).padEnd(12)} ${b.status === 'ok' ? `${b.tools} tools` : String(b.error ?? '').slice(0, 160)}`)
+    }
+    if (backends.length === 0) lines.push('  none configured -- run `npm run setup` in the plugin folder, or see the README "Configure" section')
+    try {
+      const manifest = await live.request('groups', {}, 15000)
+      const full = (manifest.groups ?? []).reduce((sum, group) => sum + (group.token_cost ?? 0), 0)
+      const tools = (manifest.groups ?? []).reduce((sum, group) => sum + (group.tool_count ?? 0), 0)
+      const router = manifest.router_cost ?? 0
+      lines.push(`router tools: ${ownTools.size} native tools; the router's own schemas cost ~${router} tokens on every request`)
+      if (full > router) {
+        lines.push(`behind the router: ${tools} tools, ~${full} tokens of schemas -> ~${full - router} tokens freed on every request (${Math.round(100 * (1 - router / full))}% smaller)`)
+      } else {
+        lines.push(`behind the router: ${tools} tools, ~${full} tokens -- at this size the router saves little; it pays off as servers are added`)
+      }
+    } catch (error) {
+      lines.push(`token saving: unavailable (${error.message})`)
+    }
+    lines.push(`active groups: ${activeGroups.size === 0 ? 'none (activate_group loads one)' : [...activeGroups].join(', ')}`)
+    const pending = (restoreOffer?.groups ?? []).filter(group => !activeGroups.has(group))
+    if (pending.length > 0) lines.push(`last session used: ${pending.join(', ')} -- /toolguardian restore (or the model's restore_groups) loads them`)
+    try {
+      const stats = await live.request('stats', {}, 10000)
+      lines.push(`output ladder: ${options.ladder.enabled ? 'on' : 'off'} -- ${stats.shaped ?? 0} results shaped, ${stats.spilled ?? 0} archived, ${stats.original_chars ?? 0} -> ${stats.final_chars ?? 0} chars since load`)
+    } catch { /* counters are a courtesy */ }
+    try {
+      const summary = await live.request('summary', { scope: 'current' }, 15000)
+      lines.push(`bypass watch: ${options.bypass.mode} -- ${summary.summary?.bypasses ?? 0} shell calls did a router tool's job this session (/toolguardian bypass)`)
+    } catch { /* the summary has its own command */ }
+    try {
+      lines.push((await live.request('update', {}, 8000)).line)
+    } catch {
+      lines.push('update: could not check')
+    }
+    lines.push('', 'This proves the saving and that the backends start. It does NOT prove your model will call the router:',
+      'run a few real tasks, then /toolguardian bypass shows whether it did.')
+    return { kind: 'success', text: lines.join('\n') }
+  }
+
+  const bypassReport = async (arg) => {
+    if (bridge === null || !ready) return { kind: 'error', text: 'tool-guardian is not ready yet -- /toolguardian shows why.' }
+    const scope = arg === 'last' ? 'previous' : /^\d+h$/.test(arg) ? `since:${Number.parseInt(arg, 10)}` : 'current'
+    const result = await bridge.request('summary', { scope }, 15000)
+    return { kind: 'success', text: result.text }
+  }
+
+  const toolguardianCommand = async (invocation) => {
+    const [sub = '', arg = ''] = String(invocation?.rawInput ?? '').trim().toLowerCase().split(/\s+/)
+    try {
+      if (sub === '' || sub === 'selftest' || sub === 'status') return await selftestReport()
+      if (sub === 'bypass') return await bypassReport(arg)
+      if (sub === 'restore') {
+        if (bridge === null || !ready) return { kind: 'error', text: 'tool-guardian is not ready yet -- /toolguardian shows why.' }
+        if (!resolveOptions(source()).allowRuntimeActivation) return { kind: 'error', text: 'restore needs allowRuntimeActivation: true.' }
+        return { kind: 'success', text: await restoreGroups() }
+      }
+      return { kind: 'error', text: `unknown subcommand "${sub}". ${USAGE}` }
+    } catch (error) {
+      return { kind: 'error', text: `/toolguardian ${sub}: ${error.message}` }
+    }
+  }
+
+  // Optional like settings: a host without the command registry still gets the tools.
+  ctx.inject(['commands'], (inner) => {
+    inner.commands.register({
+      name: 'toolguardian',
+      description: 'Tool Guardian: selftest (backends, token saving, update) · bypass [last|24h] · restore',
+      // Without `input` DSH treats a command as argument-free and sends "/toolguardian bypass" to the MODEL.
+      input: { hint: '[selftest | bypass | bypass last | restore]' },
+      handler: toolguardianCommand,
     })
   })
 

@@ -29,6 +29,12 @@ PROTOCOL -- one JSON object per line, both directions, UTF-8:
     group_tools {"group": "<name>"} -> {"tools": [{"server","tool","description","inputSchema"}]}
     log        {"entry": {...}} -> appends one line to the call log (bypass reports)
     stats      -> the router's counters since start
+    activated  {"group"} -> records a runtime activation in state.json for the next session's offer
+    restore_offer -> {"offer": {"session", "updated", "groups"} | null}  (the previous session's groups;
+               offered, never activated here)
+    summary    {"scope": "current" | "previous" | "since:<hours>" | "all" | "<session id>"}
+               -> {"text", "summary", "session"}  router use vs shell bypasses, from the call log
+    update     -> {"line"}  one "update: ..." line (shares the Node notice's daily cache)
     shutdown   -> stops every backend, then exits 0
 
 stdout is the protocol channel and nothing else may write to it: sys.stdout is
@@ -51,6 +57,7 @@ import json
 import os
 import platform
 import sys
+import time
 from pathlib import Path
 
 BRIDGE_VERSION = "0.2.0"
@@ -98,6 +105,7 @@ class Bridge:
             raise ValueError("`options` must be an object")
         router = tg.Router(config, options=options)
         router.native_groups = True    # the plugin registers activate_group
+        router.log_session_start("dsh")
         if inline:
             servers = dict(inline)
             servers.pop("tool-guardian", None)  # never front ourselves
@@ -182,6 +190,52 @@ class Bridge:
     def op_stats(self, _req: dict) -> dict:
         return dict(self._need_router().stats)
 
+    def op_activated(self, req: dict) -> dict:
+        router = self._need_router()
+        group = str(req.get("group") or "")
+        path = tg.tg_state.default_state_path() if tg.tg_state is not None else ""
+        if not group or not path or not router.session_id:
+            return {"recorded": False}
+        tg.tg_state.record_activation(path, router.session_id, group)
+        return {"recorded": True}
+
+    def op_restore_offer(self, _req: dict) -> dict:
+        router = self._need_router()
+        path = tg.tg_state.default_state_path() if tg.tg_state is not None else ""
+        if not path:
+            return {"offer": None}
+        state = tg.tg_state.load_state(path)
+        return {"offer": tg.tg_state.last_session_groups(state, current_session=router.session_id)}
+
+    def op_summary(self, req: dict) -> dict:
+        router = self._need_router()
+        if tg.tg_state is None:
+            raise RuntimeError("tg_state.py is not beside tool_guardian.py")
+        scope = str(req.get("scope") or "current")
+        rows = tg.tg_state.read_calls(tg.CALL_LOG) if tg.CALL_LOG else []
+        session = ""
+        if scope == "current":
+            session = router.session_id
+        elif scope == "previous":
+            starts = [r.get("session") for r in rows
+                      if r.get("kind") == "session" and r.get("session") and r.get("session") != router.session_id]
+            session = starts[-1] if starts else ""
+            if not session:
+                return {"text": "no earlier session in the call log (%s)" % (tg.CALL_LOG or "call log off"),
+                        "summary": None, "session": ""}
+        elif scope.startswith("since:"):
+            hours = float(scope.split(":", 1)[1] or 24)
+            since = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - hours * 3600))
+            summary = tg.tg_state.summarize(rows, since=since)
+            return {"text": tg.tg_state.render_bypass_summary(summary), "summary": summary, "session": ""}
+        elif scope != "all":
+            session = scope
+        summary = tg.tg_state.summarize(rows, session=session) if session else tg.tg_state.summarize(rows)
+        return {"text": tg.tg_state.render_bypass_summary(summary), "summary": summary, "session": session}
+
+    def op_update(self, _req: dict) -> dict:
+        return {"line": tg.update_line()}
+
     def op_shutdown(self, _req: dict) -> dict:
         stopped = self.stop_backends()
         return {"stopped": stopped, "exit": True}
@@ -192,7 +246,7 @@ class Bridge:
         for name, b in sorted(self.router.backends.items()):
             out[name] = {"status": b.status, "tools": len(b.tools),
                          "error": b.error[:300]}
-        return {"backends": out}
+        return {"backends": out, "session": self.router.session_id}
 
     def stop_backends(self) -> int:
         """tool_guardian.Backend has no stop(); end each child here."""
@@ -298,6 +352,27 @@ def _check_bad_inline_servers_is_refused() -> bool:
     return r.get("ok") is False and "must be an object" in str(r.get("error"))
 
 
+def _check_state_ops_need_start() -> bool:
+    b = Bridge()
+    return all(b.dispatch({"id": 11, "op": op}).get("ok") is False
+               and "call before start" in str(b.dispatch({"id": 11, "op": op}).get("error"))
+               for op in ("activated", "restore_offer", "summary"))
+
+
+def _check_update_op_is_one_line_and_offline_when_opted_out() -> bool:
+    saved = os.environ.get("GUARDIAN_NO_UPDATE_CHECK")
+    os.environ["GUARDIAN_NO_UPDATE_CHECK"] = "1"   # no network in a selftest
+    try:
+        r = Bridge().dispatch({"id": 12, "op": "update"})
+    finally:
+        if saved is None:
+            os.environ.pop("GUARDIAN_NO_UPDATE_CHECK", None)
+        else:
+            os.environ["GUARDIAN_NO_UPDATE_CHECK"] = saved
+    line = str((r.get("result") or {}).get("line") or "")
+    return r.get("ok") is True and line.startswith("update:") and "\n" not in line
+
+
 CHECKS = [
     ("hello_reports_versions", _check_hello_reports_versions),
     ("unknown_op_is_refused", _check_unknown_op_is_refused),
@@ -308,6 +383,9 @@ CHECKS = [
     ("serve_frames_roundtrip_and_shutdown_exits",
      _check_serve_frames_roundtrip_and_shutdown_exits),
     ("bad_inline_servers_is_refused", _check_bad_inline_servers_is_refused),
+    ("state_ops_need_start", _check_state_ops_need_start),
+    ("update_op_is_one_line_and_offline_when_opted_out",
+     _check_update_op_is_one_line_and_offline_when_opted_out),
 ]
 
 

@@ -11,3 +11,7 @@ def _isolated_guardian_home(tmp_path, monkeypatch):
     monkeypatch.setattr(tg, "CALL_LOG", str(tmp_path / "calls.jsonl"))
     monkeypatch.setenv("TOOL_GUARDIAN_CALL_LOG", str(tmp_path / "calls.jsonl"))
     monkeypatch.setenv("TOOL_GUARDIAN_SPILL_DIR", str(tmp_path / "spill"))
+    # state.json (restore offer + the hook's catalogue) and the update check: never the
+    # operator's real file, never the network.
+    monkeypatch.setenv("TOOL_GUARDIAN_STATE", str(tmp_path / "state.json"))
+    monkeypatch.setenv("GUARDIAN_NO_UPDATE_CHECK", "1")

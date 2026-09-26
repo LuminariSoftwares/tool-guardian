@@ -39,7 +39,7 @@ tool-guardian = "tool_guardian:main"
 tool-guardian-setup = "tg_setup:main"
 
 [tool.setuptools]
-py-modules = ["tool_guardian", "tg_env", "tg_ladder", "tg_spill", "tg_groups", "tg_setup"]
+py-modules = ["tool_guardian", "tg_env", "tg_ladder", "tg_spill", "tg_groups", "tg_setup", "tg_state", "tg_update"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
