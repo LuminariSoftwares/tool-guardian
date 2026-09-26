@@ -36,9 +36,10 @@ Issues = "https://github.com/LuminariSoftwares/tool-guardian/issues"
 
 [project.scripts]
 tool-guardian = "tool_guardian:main"
+tool-guardian-setup = "tg_setup:main"
 
 [tool.setuptools]
-py-modules = ["tool_guardian", "tg_env", "tg_ladder", "tg_spill", "tg_groups"]
+py-modules = ["tool_guardian", "tg_env", "tg_ladder", "tg_spill", "tg_groups", "tg_setup"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

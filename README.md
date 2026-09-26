@@ -106,6 +106,35 @@ Pure standard library — nothing else to install.
 
 ## Configure
 
+**Quickest way:** you probably already have your servers set up in another MCP client.
+
+```bash
+tool-guardian-setup import    # copies them from Claude Desktop / Cursor / Windsurf / .mcp.json, asks before writing
+tool-guardian-setup doctor    # checks the config, each server's command, your .env and ${VARS}, and says how to fix each problem
+```
+
+**Adding one more server is one command** -- everything after `--` is the server's command line, exactly as you would type it:
+
+```bash
+tool-guardian-setup add git -- uvx mcp-server-git
+tool-guardian-setup add github --env GITHUB_TOKEN='${GITHUB_TOKEN}' --description "issues and PRs" -- npx -y @modelcontextprotocol/server-github
+tool-guardian-setup list      # name, command, and the group each server's tools land in
+tool-guardian-setup remove git
+```
+
+`add` writes to the same config `doctor` finds (under DSH that is `$TOOL_GUARDIAN_CONFIG`), backs it up first, refuses a
+name that already exists unless you pass `--replace`, checks the command is on your PATH, warns about any `${VAR}` that is
+not set in your environment or `.env`, and ends with the doctor result for that one server. Then restart your MCP client
+(or start a new DSH session) to load it.
+Every server you add is automatically behind the router's 3 tools: with no groups config it gets its own group named
+after the server; with a custom groups config it lands in `other` until you add it to a group.
+
+`import` writes `~/.tool-guardian/mcp.json` (backing up any existing file), skips what it can't route yet
+(HTTP/SSE servers) and prints the one entry to put in your client instead. Inside DSH (npm install) run the
+same thing as `python <plugin folder>/tg_setup.py doctor`.
+
+Or write the config by hand:
+
 Tool Guardian reads the **standard** `mcpServers` block (the same shape Claude Desktop / Claude Code and most MCP clients use):
 
 ```json

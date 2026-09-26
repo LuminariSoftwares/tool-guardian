@@ -1,5 +1,31 @@
 # Changelog
 
+## dsh-tool-guardian 0.3.0-alpha.4 (2026-09-25)
+
+**Setup you don't have to hand-write.** `tool-guardian-setup import` copies the MCP servers you
+already configured in Claude Desktop, Cursor, Windsurf or a `.mcp.json` into tool-guardian's config
+(asks first, backs up, skips HTTP/SSE servers and tool-guardian itself, prints the one client entry
+to use). `tool-guardian-setup doctor` checks the config, every server's command on PATH, the `.env`
+and unset `${VARS}`, and prints a fix line for each problem. npm/DSH users: `python tg_setup.py doctor`.
+
+**Add or remove one server with one command.** `tool-guardian-setup add <name> -- <command> [args...]`
+(`--env KEY=VALUE`, `--description`, `--config`, `--replace`) writes the server into the same config
+`doctor` finds, backs the file up first, refuses duplicates unless `--replace`, keeps every other key
+(your `toolGuardian` groups), checks the command is on PATH, warns about unset `${VARS}` in args or env,
+and prints the doctor result for that server plus the reminder to restart your client.
+`tool-guardian-setup remove <name>` backs up and removes one entry; `tool-guardian-setup list` shows
+each server's command and the group its tools land in (its own name by default, `other` under a custom
+groups config that does not name it). A config that is not valid JSON is refused, never overwritten.
+
+### No tool is ever hidden by a custom group config
+
+With a custom `groups` config, a tool that no selector covered used to vanish from
+`list_groups_with_costs` (still callable, but invisible). It now lands in an automatic
+`other` group (`ungrouped` if you already have a group named `other`), so the model always
+sees every tool. The default (one group per server) is unchanged. If `other`, `ungrouped` and
+`ungrouped_tools` are all taken by your own groups, the leftovers go to `other_2` (then `other_3`, ...)
+instead of crashing.
+
 ## dsh-tool-guardian 0.3.0-alpha.3 — update notice (2026-09-25)
 
 Once a day, in the background, the plugin asks the npm registry for a newer version and

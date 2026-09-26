@@ -13,6 +13,8 @@ CONTRACT
     groups_cfg  None/{} -> one group per server.  {group: [selector]} -> exactly those groups.
                 selector: "server" | "server.tool" | "server.prefix*" (fnmatch on the tool name);
                 one that matches nothing is listed under "unresolved", never dropped.
+                A tool no selector covers is never hidden: it lands in an automatic "other" group
+                ("ungrouped" if the user already named a group "other"), so list_groups shows every tool.
     est_tokens(obj, chars_per_token=3.5) -> ceil(len(json.dumps(obj)) / cpt); [] costs 0
     build_groups(servers, groups_cfg=None, chars_per_token=3.5)
         -> [{"group","tools","tool_count","token_cost","unresolved"}] sorted by group
@@ -49,6 +51,18 @@ def _match(servers: dict, selector: str) -> list:
     return [(server, t) for t in servers[server] if fnmatch.fnmatchcase(str(t.get("name", "")), pattern)]
 
 
+def uncovered_group_name(taken) -> str:
+    """Name of the automatic group for tools no selector covers: the first of "other", "ungrouped",
+    "ungrouped_tools" that is not already a group, then "other_2", "other_3", ... (never raises)."""
+    for name in ("other", "ungrouped", "ungrouped_tools"):
+        if name not in taken:
+            return name
+    n = 2
+    while "other_%d" % n in taken:
+        n += 1
+    return "other_%d" % n
+
+
 def _members(servers: dict, groups_cfg: dict | None) -> dict:
     """{group: ([(server, tool dict)] sorted by full name, no duplicates, [unresolved selectors])}"""
     cfg = groups_cfg or {name: [name] for name in servers}
@@ -62,6 +76,13 @@ def _members(servers: dict, groups_cfg: dict | None) -> dict:
             for server, tool in hits:
                 found["%s.%s" % (server, tool.get("name", ""))] = (server, tool)
         out[group] = ([found[k] for k in sorted(found)], unresolved)
+    if groups_cfg:
+        covered = {"%s.%s" % (s, t.get("name", "")) for members, _ in out.values() for s, t in members}
+        rest = {"%s.%s" % (s, t.get("name", "")): (s, t) for s in servers for t in servers[s]}
+        left = {k: v for k, v in rest.items() if k not in covered}
+        if left:
+            name = uncovered_group_name(out)
+            out[name] = ([left[k] for k in sorted(left)], [])
     return out
 
 
@@ -179,6 +200,20 @@ def _t_inputs_are_not_mutated():
     return first == second and json.dumps([servers, cfg], sort_keys=True) == before
 
 
+def _t_uncovered_tools_land_in_other():
+    servers, _ = _fixture()
+    g = _by_name(servers, {"image": ["jobs.image_*"]})
+    return (g["other"]["tools"] == ["jobs.video_render", "n8n.n8n_list_workflows"] and g["other"]["unresolved"] == []
+            and resolve(servers, {"image": ["jobs.image_*"]}, "other") == [("jobs", "video_render"), ("n8n", "n8n_list_workflows")])
+
+
+def _t_no_other_group_when_everything_is_covered():
+    servers, cfg = _fixture()
+    named = _by_name(servers, {"other": ["jobs.image_*"]})
+    return "other" not in _by_name(servers, cfg) and set(named) == {"other", "ungrouped"} \
+        and named["ungrouped"]["tools"] == ["jobs.video_render", "n8n.n8n_list_workflows"]
+
+
 CHECKS = [
     ("est_tokens_matches_formula", _t_est_tokens_matches_formula),
     ("empty_list_costs_zero", _t_empty_list_costs_zero),
@@ -192,6 +227,8 @@ CHECKS = [
     ("resolve_unknown_group_keyerror_lists_names", _t_resolve_unknown_group_keyerror_lists_names),
     ("render_last_line_is_next_step", _t_render_last_line_is_next_step),
     ("inputs_are_not_mutated", _t_inputs_are_not_mutated),
+    ("uncovered_tools_land_in_other", _t_uncovered_tools_land_in_other),
+    ("no_other_group_when_everything_is_covered", _t_no_other_group_when_everything_is_covered),
 ]
 
 

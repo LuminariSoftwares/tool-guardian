@@ -39,7 +39,10 @@ def c_default_is_one_group_per_server_sorted():
 
 def c_selectors():
     g = {x["group"]: x for x in G.build_groups(SERVERS, CFG)}
-    return (sorted(g) == ["flows", "ghost", "image", "video"]
+    # 2026-09-25: the "other" group (tg_groups 0.3.0-alpha.4 working tree) -- a tool no selector covers is never
+    # hidden; jobs.music_make is the one tool CFG leaves uncovered, so it must land there.
+    return (sorted(g) == ["flows", "ghost", "image", "other", "video"]
+            and g["other"]["tools"] == ["jobs.music_make"]
             and g["image"]["tools"] == ["jobs.image_generate", "jobs.image_status"]
             and g["video"]["tools"] == ["jobs.video_render"]
             and g["flows"]["tools"] == ["n8n.n8n_get_workflow", "n8n.n8n_list_workflows"]
@@ -75,6 +78,16 @@ def c_inputs_not_mutated_and_deterministic():
     return a == b and json.dumps(SERVERS, sort_keys=True) == before
 
 
+def c_all_fallback_names_taken_gets_numbered_group():
+    # 2026-09-25: other/ungrouped/ungrouped_tools all used as group names while a tool is uncovered used to raise
+    # StopIteration. The uncovered tools must land in a numbered fallback (other_2, then other_3, ...), never vanish.
+    cfg = {"other": ["jobs.image_generate"], "ungrouped": ["jobs.image_status"], "ungrouped_tools": ["n8n"]}
+    names = [g["group"] for g in G.build_groups(SERVERS, cfg)]
+    cfg2 = dict(cfg, other_2=["jobs.music_make"])
+    g2 = {g["group"]: g for g in G.build_groups(SERVERS, cfg2)}
+    return "other_2" in names and "other_3" in g2 and "jobs.video_render" in g2["other_3"]["tools"]
+
+
 CHECKS = [
     ("est_tokens_is_ceil_of_json_chars", c_est_tokens_is_ceil_of_json_chars),
     ("default_is_one_group_per_server_sorted", c_default_is_one_group_per_server_sorted),
@@ -82,6 +95,7 @@ CHECKS = [
     ("resolve_pairs_and_unknown_group", c_resolve_pairs_and_unknown_group),
     ("render_has_costs_total_and_next_step", c_render_has_costs_total_and_next_step),
     ("inputs_not_mutated_and_deterministic", c_inputs_not_mutated_and_deterministic),
+    ("all_fallback_names_taken_gets_numbered_group", c_all_fallback_names_taken_gets_numbered_group),
 ]
 
 
