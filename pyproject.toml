@@ -43,4 +43,5 @@ py-modules = ["tool_guardian", "tg_env", "tg_ladder", "tg_spill", "tg_groups", "
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "--strict-markers --strict-config"

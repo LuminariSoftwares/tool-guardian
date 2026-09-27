@@ -13,6 +13,8 @@ Three jobs, all stdlib-only and side-effect free on import:
 Every network/filesystem location is a parameter, so the selftest never
 touches the real ``~/.tool-guardian``.  Standard library only, Python 3.9+.
 """
+
+from __future__ import annotations
 import contextlib
 import json
 import os

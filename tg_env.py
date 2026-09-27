@@ -8,6 +8,8 @@ plus a --selftest CLI:
     expand_args(args, environ=None) -> list
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import re

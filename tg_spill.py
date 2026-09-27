@@ -13,6 +13,8 @@ History: library written by the local model through delegate_task (dlg_20260919_
 excepts and recalibrated two selftest fixtures that contradicted the contract. MIT licensed.
 """
 
+from __future__ import annotations
+
 import os
 import re
 import json
