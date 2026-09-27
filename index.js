@@ -35,6 +35,7 @@
  * MIT licensed.
  */
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -106,6 +107,14 @@ export const Config = Schema.object({
     minNameLength: Schema.natural().default(8)
       .description('Catalogue tool names shorter than this are not auto-matched (too noisy).'),
   }).default({}),
+  loopGuard: Schema.object({
+    enabled: Schema.boolean().default(true)
+      .description('Guard DSH\'s OWN tools (bash, grep, web_fetch, ...) against a call repeated with the same arguments and the same result (TG_LOOP_GUARD=0 overrides).'),
+    warnAt: Schema.natural().default(3)
+      .description('How many identical results in a row before a repeat-call warning is prepended to the result.'),
+    blockAt: Schema.natural().default(5)
+      .description('How many identical results in a row before the next such call is refused before it runs.'),
+  }).default({}),
   builtinGroups: Schema.object({
     enabled: Schema.boolean().default(false)
       .description('Hide groups of DSH\'s OWN tools (subagents, workflow, goals, ...) from each agent until activate_group loads them.'),
@@ -158,6 +167,12 @@ export function resolveOptions(section, env = process.env) {
       rules: [...(section.bypass?.rules ?? [])],
       minNameLength: section.bypass?.minNameLength ?? 8,
     },
+    loopGuard: {
+      enabled: section.loopGuard?.enabled !== false
+        && !LOOP_OFF.has(String(env.TG_LOOP_GUARD ?? '').trim().toLowerCase()),
+      warnAt: section.loopGuard?.warnAt ?? 3,
+      blockAt: section.loopGuard?.blockAt ?? 5,
+    },
     builtinGroups: {
       enabled: section.builtinGroups?.enabled === true
         && !['0', 'false', 'False', 'off', 'no'].includes(env.TOOL_GUARDIAN_BUILTIN_GROUPS ?? ''),
@@ -167,6 +182,86 @@ export function resolveOptions(section, env = process.env) {
     spillDir: env.TOOL_GUARDIAN_SPILL_DIR?.trim() || section.spillDir || '',
     spillKeep: section.spillKeep ?? 500,
   }
+}
+
+// ── T6: the router's repeated-call guard, for DSH's OWN tools ──────────────────
+// The Python router already refuses a call_tool that keeps answering the same way.
+// Nothing guards bash, grep, web_fetch and the rest -- they never pass through it --
+// so an agent that re-runs one identical command pays for the same bytes until the
+// context window fills. Same thresholds and the same two strings as tool_guardian.py's
+// call_tool guard, so a refusal reads identically on either side of the bridge.
+
+/** $TG_LOOP_GUARD values that switch the guard off, in any case. */
+const LOOP_OFF = new Set(['0', 'false', 'off', 'no'])
+
+/** JSON with object keys in sorted order, so argument order cannot fake a different call. */
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${stableJson(value[k])}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+/**
+ * One repeated-call guard, shared by every tool of one plugin instance.
+ * `before` is asked before a call runs, `after` once its result is known.
+ * Pure: no clock, no I/O, so the counts it reports are its own alone.
+ * @returns {{ before: (key) => 'block'|undefined, after: (key, text) => string, blockText: (n) => string, stats: { warnings: number, blocks: number } }}
+ */
+export function createLoopGuard({ warnAt = 3, blockAt = 5, window = 40 } = {}) {
+  const recent = []   // { key, hash }, oldest first; the last `window` entries only
+  const stats = { warnings: 0, blocks: 0 }
+  const span = Math.max(1, blockAt - 1)   // identical results that make the next call pointless
+  const warnText = (n) => `[tool-guardian: this exact call has now run ${n} times with the same result. Repeating it will not change the answer -- use what you have, change the arguments, or tell the user what is blocking you.]`
+  const blockText = (n) => `[tool-guardian: this exact call was not run again -- it has returned the same result ${n} times. Use the result you already have, change the arguments, or tell the user what is blocking you.]`
+  const hashesFor = key => recent.filter(entry => entry.key === key).map(entry => entry.hash)
+  return {
+    stats,
+    warnText,
+    blockText,
+    identicalCount: span,   // how many identical results a refusal names: blockText(identicalCount)
+    /** 'block' when this exact call already ran `span` times with one identical result. Stores nothing. */
+    before(key) {
+      const prior = hashesFor(key)
+      const last = prior[prior.length - 1]
+      if (prior.length < span || !prior.slice(-span).every(hash => hash === last)) return undefined
+      stats.blocks += 1
+      return 'block'
+    },
+    /** The warning to prepend, or '' -- and the call is remembered either way. */
+    after(key, text) {
+      // sha1 as a FINGERPRINT, not as a security primitive: it only has to tell
+      // "this result is byte-identical to the last one" cheaply, and the result is
+      // never hashed for anything that needs to be unforgeable.
+      recent.push({ key, hash: createHash('sha1').update(String(text)).digest('hex') })
+      while (recent.length > window) recent.shift()
+      const same = hashesFor(key)
+      const last = same[same.length - 1]
+      let run = 1
+      while (run < same.length && same[same.length - 1 - run] === last) run += 1
+      if (run < warnAt) return ''
+      stats.warnings += 1
+      return warnText(run)
+    },
+  }
+}
+
+/** One number, counting anything missing or non-numeric as zero. */
+const counter = value => (Number.isFinite(Number(value)) ? Number(value) : 0)
+
+/**
+ * The /toolguardian call-check line: what the router stopped, fixed, warned about
+ * and refused, plus the same counters for the DSH-side guard (native), which the
+ * Python router cannot see.
+ */
+export function callChecksLine(routerStats = {}, native = {}) {
+  const r = routerStats ?? {}
+  const n = native ?? {}
+  return `call checks: ${counter(r.schema_rejects)} bad calls stopped before the server, `
+    + `${counter(r.schema_coercions)} fixed silently, `
+    + `${counter(r.loop_warnings) + counter(n.warnings)} repeat warnings, `
+    + `${counter(r.loop_blocks) + counter(n.blocks)} repeats refused`
 }
 
 /**
@@ -413,6 +508,41 @@ export function apply(ctx, config) {
   let session = ''              // the Python router's session id (every call-log row carries it)
   let restoreOffer = null       // { session, updated, groups } from the previous session, or null
   let bootError = ''            // why the last start failed, for /toolguardian
+  // One guard per plugin instance, rebuilt with the options whenever the bridge restarts.
+  let loopGuard = createLoopGuard(resolveOptions(source()).loopGuard)
+
+  /** The guard is on unless the settings or the environment say otherwise. */
+  const loopActive = () => {
+    // $TG_LOOP_GUARD is read HERE, not at boot: it can be switched off mid-session,
+    // and the settings it was resolved from stay authoritative either way.
+    if (LOOP_OFF.has(String(process.env.TG_LOOP_GUARD ?? '').trim().toLowerCase())) return false
+    return (bridge?.options?.loopGuard ?? resolveOptions(source()).loopGuard).enabled !== false
+  }
+
+  /** One call as a comparable string: who asked, which tool, with which arguments. */
+  const loopKey = (exec) => `${exec.agent?.session?.id ?? exec.sessionId ?? ''}\u0000${exec.name}\u0000${stableJson(exec.arguments ?? {})}`
+
+  /** before() that can only ever say "block" or nothing -- never throws, never changes a call. */
+  const guardBefore = (exec) => {
+    try {
+      if (ownTools.has(exec.name) || !loopActive()) return undefined
+      return loopGuard.before(loopKey(exec))
+    } catch (error) {
+      ctx.logger.debug(`tool-guardian loop guard: ${error.message}; the call runs`)
+      return undefined
+    }
+  }
+
+  /** after() that can only ever return a prefix or '' -- never throws, never changes a result. */
+  const guardAfter = (exec, text) => {
+    try {
+      if (ownTools.has(exec.name) || !loopActive()) return ''
+      return loopGuard.after(loopKey(exec), text) ?? ''
+    } catch (error) {
+      ctx.logger.debug(`tool-guardian loop guard: ${error.message}; the result is unchanged`)
+      return ''
+    }
+  }
 
   /** (Re)apply one agent's mask: every tool of every still-hidden group is denied for it. */
   const applyMask = (agent, hidden) => {
@@ -685,6 +815,8 @@ export function apply(ctx, config) {
   const recycleIfChanged = () => {
     if (bridge === null) return
     if (JSON.stringify(resolveOptions(source())) === JSON.stringify(bridge.options)) return
+    // The guard's thresholds came from the options that just went away: new guard, new counts.
+    loopGuard = createLoopGuard(resolveOptions(source()).loopGuard)
     stopBridge()
     boot()
   }
@@ -701,6 +833,9 @@ export function apply(ctx, config) {
       let text = flattenText(decision.content ?? result.content)
       if (text === undefined) return decision
       let changed = false
+      // Fingerprinted on the result as the tool returned it, and prepended only at
+      // the end: the ladder below must see the original bytes, not a warning about them.
+      const loopPrefix = guardAfter(exec, text)
       const skip = ownTools.has(exec.name) || options.ladder.skipTools.includes(exec.name)
       const floor = result.isError ? 300 : (options.ladder.options.compact_above_chars ?? 1200)
       if (options.ladder.enabled && options.ladder.allTools && !skip && text.length > floor && !HANDLED_RE.test(text)) {
@@ -714,6 +849,10 @@ export function apply(ctx, config) {
       }
       if (nudge !== undefined) {
         text += `\n\nNEXT STEP: "${nudge.tool}" is a router tool -- next time call call_tool(server="${nudge.server}", tool="${nudge.tool}", args={...}) instead of the shell.`
+        changed = true
+      }
+      if (loopPrefix !== '') {
+        text = `${loopPrefix}\n${text}`
         changed = true
       }
       if (!changed) return decision
@@ -731,6 +870,12 @@ export function apply(ctx, config) {
   // ── router bypass: a shell call doing a router tool's job ──────────────────
   ctx.on('tools/pre-execute', async (exec, next) => {
     const decision = await next()
+    // Before the bypass rules, and before they can return early: a call that would only
+    // repeat the last identical result is refused whether or not bypass watching is on.
+    // The router's own tools are left alone -- Python already guards those.
+    if (decision.kind === 'allow' && guardBefore(exec) === 'block') {
+      return { kind: 'deny', reason: loopGuard.blockText(loopGuard.identicalCount) }
+    }
     try {
       const options = bridge?.options
       if (!ready || options === undefined || options.bypass.mode === 'off') return decision
@@ -822,6 +967,7 @@ export function apply(ctx, config) {
     try {
       const stats = await live.request('stats', {}, 10000)
       lines.push(`output ladder: ${options.ladder.enabled ? 'on' : 'off'} -- ${stats.shaped ?? 0} results shaped, ${stats.spilled ?? 0} archived, ${stats.original_chars ?? 0} -> ${stats.final_chars ?? 0} chars since load`)
+      lines.push(callChecksLine(stats, loopGuard.stats))
     } catch { /* counters are a courtesy */ }
     try {
       const summary = await live.request('summary', { scope: 'current' }, 15000)

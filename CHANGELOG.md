@@ -19,6 +19,11 @@ one-line notice that repeating it will not change the answer; the fifth is not r
 
 The router's stats now count `schema_rejects`, `schema_coercions`, `loop_warnings` and `loop_blocks`.
 
+**The loop guard covers DSH's own tools too.** Under the DSH bundle the same 3rd-warn / 5th-refuse rule now applies to
+the harness's built-in tools (bash, pwsh, grep, web_fetch, ...), which never pass through the router. Same messages,
+same thresholds (`loopGuard.warnAt` / `loopGuard.blockAt`, `TG_LOOP_GUARD=0` turns it off). `/toolguardian` gains a
+`call checks:` line with bad calls stopped, calls fixed, repeat warnings and repeats refused.
+
 **Python 3.9 actually works.** The package has always said `>=3.9`, but `tg_spill.py`, `tg_state.py` and `tg_env.py` used
 `str | None` annotations, which crash on import under 3.9. They now use postponed annotations; the test suite passes on
 3.9 and 3.11, and CI runs both. `pytest` (not only `python -m pytest`) now finds the package from a fresh clone.
