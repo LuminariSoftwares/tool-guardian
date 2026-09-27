@@ -270,6 +270,21 @@ Definitions are half the problem; one 40 KB build log is the other half. Every `
 
 `list_groups_with_costs` prices each tool group in context tokens, and every router call is logged (argument *values* never are) to `~/.tool-guardian/calls.jsonl` so you can measure whether your model actually uses the router.
 
+## It catches the mistakes small models make (unreleased)
+
+Local models get tool calls *almost* right: a count sent as `"2"`, a required argument left out, a made-up option, the
+same failing call repeated until the context runs out. The router now sits in front of those mistakes:
+
+| mistake | what happens |
+|---|---|
+| a quoted number, `"true"`/`"false"`, a number where text is expected | fixed silently, then sent |
+| a required argument missing, a wrong type, a value outside the allowed list, an unknown key on a closed schema | **not sent**; the model gets each problem and a correct example call |
+| the same call returning the same result a 3rd time | the result is prefixed with a one-line "repeating this will not change the answer" |
+| the same call a 5th time | not run; the model is told to use what it has or say what is blocking it |
+
+Finding a tool is cheaper too: `search_capabilities(query)` returns the few matching `server.tool: description`
+lines instead of a whole catalogue. Switches: `TG_VALIDATE_ARGS=0`, `TG_LOOP_GUARD=0`.
+
 ## Native DeepSeek Harness (DSH) bundle
 
 The same repo is an installable DSH bundle, `dsh-tool-guardian`. The Python router is unchanged — the bundle is a bridge to it, not a rewrite, and the MCP server above keeps working.

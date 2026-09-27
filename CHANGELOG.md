@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+**Find a tool by keyword.** A fourth router tool, `search_capabilities(query, server?, limit?)`, ranks tools across every
+connected server by keyword (name hits beat description hits) and returns only the top few lines, in the same
+`server.tool: description` format as `list_capabilities`. For a local model with a small window, discovery now costs a
+handful of lines instead of a full catalogue.
+
+**Bad arguments never reach the server.** Every `call_tool` is checked against the tool's own `inputSchema` first:
+missing required arguments, wrong types, values outside an `enum`, and unknown keys when the schema is closed. A call
+that cannot work is not sent; the model gets the exact problems and a corrected example instead of a server error it
+has to decode. Safe fixes are applied silently: `"2"` becomes `2` for an integer, `"true"` becomes `true` for a boolean,
+a number becomes a string where a string is expected. Turn it off with `TG_VALIDATE_ARGS=0`.
+
+**Loops are named, then stopped.** The third identical call that returns the identical result is answered with a
+one-line notice that repeating it will not change the answer; the fifth is not run at all. Calls whose results change
+(polling a job, a counter) are never flagged. Turn it off with `TG_LOOP_GUARD=0`.
+
+The router's stats now count `schema_rejects`, `schema_coercions`, `loop_warnings` and `loop_blocks`.
+
 ## dsh-tool-guardian 0.3.0-alpha.5 / PyPI tool-guardian 0.3.0 (2026-09-26)
 
 **Know what it is doing without opening a log file.** Under DSH, type `/toolguardian` in a session. It is the

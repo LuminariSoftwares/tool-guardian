@@ -1,0 +1,41 @@
+name: Feature Request
+description: Suggest an enhancement to tool-guardian
+title: "[Enhancement] "
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: "Tell us about a feature that would improve tool-guardian."
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problem or Limitation"
+      description: "What is the current limitation or pain point?"
+      placeholder: "The router doesn't support tool result caching, so the same tool is called multiple times for identical inputs..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Proposed Solution"
+      description: "How would you solve this? What would the feature do?"
+      placeholder: "Add a simple in-memory cache for tool results keyed by tool name and input hash..."
+    validations:
+      required: true
+
+  - type: input
+    id: context
+    attributes:
+      label: "Context: Model, Backend, and Window Size"
+      description: "Where did you encounter this limitation?"
+      placeholder: "mistral 7B on Ollama, context window 8192"
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "Expected Impact"
+      description: "What would improve? Context savings? Speed? Include numbers if available."
+      placeholder: "Could reduce redundant tool calls by 15-20% in typical coding workflows"

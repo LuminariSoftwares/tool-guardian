@@ -58,8 +58,11 @@ MIT licensed.
 from __future__ import annotations
 
 import argparse
+import collections
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -353,6 +356,104 @@ def render_result(res) -> tuple:
     return "\n".join(parts), bool(res.get("isError"))
 
 
+# ------------------------------------------------------ argument checking ------
+
+def _coerce_arg(value, want):
+    """One SAFE coercion of `value` towards the declared type, or the value back
+    unchanged. Safe means the conversion cannot change what the caller meant: JSON
+    draws no distinction between 2 and "2" the way a model's output does, so the
+    quote is punctuation, not meaning. Anything less certain (a bare word for an
+    integer) is left alone and reported as a problem instead."""
+    if want == "integer":
+        if isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
+            return int(value.strip())
+    elif want == "number":
+        if isinstance(value, str):
+            try:
+                return float(value.strip())
+            except ValueError:
+                return value          # not a number after all -- let it be reported
+    elif want == "boolean":
+        if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+            return value.strip().lower() == "true"
+    elif want == "string":
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+    elif want == "array" and not isinstance(value, list):
+        return [value]
+    return value
+
+
+def _arg_is_type(value, want) -> bool:
+    """Does the (possibly coerced) value satisfy the declared JSON Schema type?
+    A bool is never an integer: Python says otherwise, JSON does not, and the model
+    that sent `true` for a count did not send 1. An unknown type name passes."""
+    if want == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if want == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if want == "string":
+        return isinstance(value, str)
+    if want == "boolean":
+        return isinstance(value, bool)
+    if want == "array":
+        return isinstance(value, list)
+    if want == "object":
+        return isinstance(value, dict)
+    if want == "null":
+        return value is None
+    return True
+
+
+def validate_args(schema, args) -> tuple:
+    """Check one tools/call argument object against a tool's declared inputSchema,
+    BEFORE it costs a backend round trip. Returns (ok, fixed, problems): `fixed` is
+    what should actually be sent -- the caller's arguments with only the safe
+    coercions applied -- and `problems` is the human-readable list the model gets
+    back instead of a server-side error it has to guess about.
+
+    Pure: no I/O, no globals, no clock. Same input, same output, so it can be read
+    as the definition of the contract rather than as behaviour."""
+    if not isinstance(schema, dict) or not (schema.get("properties") or schema.get("required")):
+        # Nothing declared, so nothing to check -- which is also why a caller that
+        # sent no args at all (None) is fine here: a tool that declares nothing
+        # takes nothing, and {} is the honest reading of an absent `args`.
+        return True, (dict(args) if isinstance(args, dict) else {}), []
+    if not isinstance(args, dict):
+        return False, {}, ["arguments must be a JSON object"]
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        props = {}
+    required = schema.get("required")
+    if not isinstance(required, (list, tuple)):
+        required = []
+    problems = []
+    for name in required:
+        if name not in args:
+            spec = props.get(name)
+            want = spec.get("type") if isinstance(spec, dict) else None
+            problems.append("missing required argument '%s' (%s)" % (name, want or "any"))
+    fixed = {}
+    for key, value in args.items():
+        spec = props.get(key)
+        if isinstance(spec, dict) and isinstance(spec.get("type"), str):
+            value = _coerce_arg(value, spec["type"])
+            if not _arg_is_type(value, spec["type"]):
+                problems.append("argument '%s' should be %s, got %s"
+                                % (key, spec["type"], type(value).__name__))
+        enum = spec.get("enum") if isinstance(spec, dict) else None
+        if isinstance(enum, (list, tuple)) and value not in enum:
+            problems.append("argument '%s' must be one of: %s"
+                            % (key, ", ".join(map(str, enum))))
+        if key not in props and schema.get("additionalProperties") is False:
+            problems.append("unknown argument '%s'; allowed: %s"
+                            % (key, ", ".join(sorted(props))))
+        fixed[key] = value
+    # Nested objects are not walked: a schema is a floor, not a compiler, and a
+    # half-validated tree is better than none for the tool that wants it whole.
+    return not problems, fixed, problems
+
+
 # -------------------------------------------------------------- backend ------
 
 class Backend:
@@ -484,7 +585,13 @@ class Router:
         self.native_groups = False   # True under the DSH plugin, where activate_group exists
         self._spill = None
         self.stats = {"calls": 0, "errors": 0, "shaped": 0, "spilled": 0,
-                      "original_chars": 0, "final_chars": 0}
+                      "original_chars": 0, "final_chars": 0,
+                      "schema_rejects": 0, "schema_coercions": 0,
+                      "loop_warnings": 0, "loop_blocks": 0}
+        # (key, result_hash) for the last 20 call_tool calls. The loop guard's whole
+        # memory: a model retrying an identical call is invisible per-call, so it
+        # is only visible by remembering what the last few calls returned.
+        self._recent = collections.deque(maxlen=20)
         # Every call-log row carries this, so "the last session" is a question the log can answer.
         self.session_id = tg_state.new_session_id() if tg_state is not None else ""
 
@@ -557,15 +664,75 @@ class Router:
                        "one server's full tool list, then call_tool to invoke.")
         return "\n".join(out) or "no backends configured"
 
+    def search(self, query: str, server: str = "", limit=None) -> str:
+        """Find a tool by keyword, one line per hit, in the catalogue's own format.
+        The full listing of a big server is expensive in both directions -- the
+        model pays for it to read and the server pays to produce it -- while the
+        model usually wants one of the forty lines. This returns the ranked few.
+
+        Scoring is deliberately simple and explainable (a name hit beats a
+        description hit; a server-name hit is a strong signal the caller is asking
+        about that server): the model is told WHICH line won and why the others did
+        not, not handed a number it cannot act on."""
+        if not (query or "").strip():
+            return self.catalogue(server)
+        if server and (server not in self.backends
+                       or self.backends[server].status != "ok"):
+            # An unknown or dead server gets catalogue()'s own loud wording. A silent
+            # "no matches" here would read as "this server has no such tool", which
+            # is the exact misreading this file refuses to allow.
+            return self.catalogue(server)
+        tokens = [t for t in re.findall(r"[a-z0-9]+", (query or "").lower()) if len(t) > 1]
+        hits = []
+        for name, b in sorted(self.backends.items()):
+            if server and name != server:
+                continue
+            if b.status != "ok":
+                continue
+            for t in b.tools:
+                tname = str(t.get("name") or "")
+                low_desc = short(t.get("description")).lower()
+                score = 0
+                for tok in tokens:
+                    if tok in tname.lower():
+                        score += 3
+                    if tok == name.lower():
+                        score += 2
+                    if tok in low_desc:
+                        score += 1
+                if score:
+                    hits.append((score, "%s.%s" % (name, tname),
+                                 "%s.%s: %s" % (name, tname, short(t.get("description")))))
+        if not hits:
+            return ("no tools match %r. NEXT STEP: list_capabilities() to see every "
+                    "server, or try another word." % query)
+        hits.sort(key=lambda h: (-h[0], h[1]))
+        try:
+            n = int(limit)
+        except (TypeError, ValueError):
+            n = 8
+        top = hits[:max(1, min(25, n))]
+        out = ["%d match(es) for %r:" % (len(hits), query)]
+        out += [h[2] for h in top]
+        out.append("")
+        out.append('NEXT STEP: describe_tool(server="%s", tool="%s") for its arguments, '
+                   "then call_tool." % tuple(top[0][1].split(".", 1)))
+        return "\n".join(out)
+
     @staticmethod
-    def _coerce(args: dict) -> dict:
+    def _coerce(args: dict, name: str = "") -> dict:
         """Accept what a model actually sends, not only what the schema says.
         Models commonly send args as a JSON STRING, or name the server `query`/
         `name`. A strict schema is right for a machine caller and wrong for a
         model one -- it loses correct answers on JSON shape. Parse and alias;
         refuse only what is genuinely ambiguous."""
         a = dict(args or {})
-        for alias in ("query", "name", "server_name"):
+        # `query` is an alias for `server` everywhere EXCEPT on search_capabilities,
+        # where it is the search text itself: aliasing there would consume the very
+        # words being searched for and leave an empty query. [T1]
+        aliases = ("name", "server_name") if name == "search_capabilities" \
+            else ("query", "name", "server_name")
+        for alias in aliases:
             if not a.get("server") and isinstance(a.get(alias), str):
                 a["server"] = a.pop(alias)
         for alias in ("tool_name", "toolName"):
@@ -680,9 +847,12 @@ class Router:
         # any test the lane wrote. [O5] 2026-09-09
         if name in ("list_skills", "read_skill"):
             return self._handle_skill(name, dict(args or {}))
-        args = self._coerce(args)
+        args = self._coerce(args, name)
         if name == "list_capabilities":
             return self.catalogue(str(args.get("server") or ""))
+        if name == "search_capabilities":
+            return self.search(str(args.get("query") or ""), str(args.get("server") or ""),
+                               args.get("limit"))
         if name == "describe_tool":
             b = self.backends.get(str(args.get("server") or ""))
             if not b:
@@ -704,10 +874,69 @@ class Router:
                 return ("no server named %r. Known: %s\n\nNEXT STEP: list_capabilities()"
                         % (args.get("server"), ", ".join(sorted(self.backends))))
             tool = str(args.get("tool") or "")
-            res = b.call(tool, args.get("args") or {})
+            sent = args.get("args") or {}
+            # ---- T2: check the arguments against the tool's own schema first. A
+            # call that cannot possibly work should cost a string comparison here,
+            # not a backend round trip and a server-side error the model must decode.
+            if os.environ.get("TG_VALIDATE_ARGS", "1") not in _OFF:
+                found = b.find(tool)
+                if found is not None:
+                    try:
+                        ok, fixed, problems = validate_args(found.get("inputSchema") or {}, sent)
+                    except Exception as exc:  # noqa: BLE001
+                        # Fail OPEN. A checker that crashes must not become a tool
+                        # that cannot be called at all.
+                        log("argument check failed for %s.%s: %s -- sending unchanged"
+                            % (b.name, tool, exc))
+                        ok, fixed, problems = True, sent, []
+                    if not ok:
+                        self.stats["schema_rejects"] += 1
+                        self._last_meta = {"is_error": True, "rule": "schema_reject"}
+                        req = (found.get("inputSchema") or {}).get("required") or []
+                        example = ", ".join('"%s": <%s>' % (k, k) for k in req)
+                        return ("call_tool was not sent: the arguments do not match %s.%s's schema:\n- "
+                                % (b.name, tool)
+                                + "\n- ".join(problems)
+                                + "\n\nNEXT STEP: call_tool(server=\"%s\", tool=\"%s\", args={%s})"
+                                % (b.name, tool, example))
+                    if fixed != sent:
+                        self.stats["schema_coercions"] += 1
+                    sent = fixed
+            # ---- T3: the same call, answered the same way, again and again. Nothing
+            # downstream changes between attempt 3 and attempt 40, so the model is
+            # told so rather than left paying for a result it already has.
+            guard = os.environ.get("TG_LOOP_GUARD", "1") not in _OFF
+            loop_key = (b.name, tool, json.dumps(sent, sort_keys=True, default=str))
+            if guard:
+                prior = [h for k, h in self._recent if k == loop_key]
+                if len(prior) >= 4 and len(set(prior[-4:])) == 1:
+                    self.stats["loop_blocks"] += 1
+                    self._last_meta = {"is_error": True, "rule": "loop_block"}
+                    return ("[tool-guardian: this exact call was not run again -- it has "
+                            "returned the same result %d times. Use the result you already "
+                            "have, change the arguments, or tell the user what is blocking "
+                            "you.]" % len(prior[-4:]))
+            res = b.call(tool, sent)
             if RAW_RESULTS:
                 return json.dumps(res, indent=2)[:LEGACY_CAP]
             text, is_error = render_result(res)
+            loop_prefix = ""
+            if guard:
+                # sha1 as a FINGERPRINT, not as a security primitive: it only has to
+                # tell "this result is byte-identical to the last one" cheaply, and
+                # the result is never hashed for anything that needs to be unforgeable.
+                digest = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()  # nosec B324
+                self._recent.append((loop_key, digest))
+                same = [h for k, h in self._recent if k == loop_key]
+                if len(same) >= 3 and len(set(same[-3:])) == 1:
+                    self.stats["loop_warnings"] += 1
+                    run = 1
+                    while run < len(same) and same[-1 - run] == same[-1]:
+                        run += 1
+                    loop_prefix = ("[tool-guardian: this exact call has now run %d times "
+                                   "with the same result. Repeating it will not change the "
+                                   "answer -- use what you have, change the arguments, or "
+                                   "tell the user what is blocking you.]\n" % run)
             text, meta = self.shape(text, tool=tool, is_error=is_error)
             self._last_meta = dict(meta, is_error=is_error)
             if is_error:
@@ -720,7 +949,7 @@ class Router:
                        % meta["spill_id"])
             else:
                 nxt = "you have the result -- answer the user now. Call another tool only if this is not enough."
-            return text + "\n\nNEXT STEP: " + nxt
+            return loop_prefix + text + "\n\nNEXT STEP: " + nxt
         if name == "list_groups_with_costs":
             if tg_groups is None:
                 return "groups are unavailable: tg_groups.py is not beside tool_guardian.py"
@@ -807,9 +1036,19 @@ def build_router_tools(backends: dict) -> list:
                          "ARE AVAILABLE AND YOU SHOULD USE THEM RATHER THAN "
                          "GUESSING OR WORKING AROUND THEM: " + catalogue + ". "
                          "If a request concerns any of those, call this FIRST to "
-                         "find the right tool, then call_tool."),
+                         "find the right tool, then call_tool. To find a tool by "
+                         "keyword instead, call search_capabilities(query)."),
          "inputSchema": {"type": "object", "properties": {
              "server": {"type": "string", "description": "server name, or omit for all"}}}},
+        {"name": "search_capabilities",
+         "description": ("Find a tool by keyword across every connected server. "
+                         "Cheaper than listing them all when you know roughly what "
+                         "you are looking for."),
+         "inputSchema": {"type": "object", "properties": {
+             "query": {"type": "string"},
+             "server": {"type": "string", "description": "optional: search one server only"},
+             "limit": {"type": "integer", "description": "max results, default 8"}},
+             "required": ["query"]}},
         {"name": "describe_tool",
          "description": ("Get the full argument schema for one tool. Call after "
                          "list_capabilities and before call_tool if unsure of args."),
@@ -851,11 +1090,20 @@ def build_extra_tools() -> list:
 ROUTER_TOOLS = []  # filled at startup by build_router_tools + build_skill_tools
 
 
+CORE_TOOLS = ("list_capabilities", "describe_tool", "call_tool")
+
+
 def build_all_tools(backends: dict) -> list:
-    """The three router tools, plus the two skill tools when skills are
-    configured. With no skills configured the model sees exactly the three it
-    saw before this feature existed. [O5] 2026-09-09"""
-    return (build_router_tools(backends) + build_extra_tools()
+    """The three router tools the model always needs, FIRST and in that fixed
+    order, then search_capabilities and the extras, plus the two skill tools when
+    skills are configured. The core three lead because their positions are load
+    bearing: the bridge, the self-tests and the pre-0.3.0 orderings all read
+    names[:3], and a stable leading triple is what keeps a long session's prompts
+    from reshuffling every time a tool is added. [O5] 2026-09-09"""
+    tools = build_router_tools(backends)
+    head = [t for n in CORE_TOOLS for t in tools if t["name"] == n]
+    tail = [t for t in tools if t["name"] not in CORE_TOOLS]
+    return (head + tail + build_extra_tools()
             + build_skill_tools(scan_skills(SKILLS_DIRS)))
 
 
