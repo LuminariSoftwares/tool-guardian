@@ -90,7 +90,7 @@ tg_groups = _optional("tg_groups")    # tool groups priced in context tokens
 tg_state = _optional("tg_state")      # session ids, state.json, call-log summary, Claude Code hook
 tg_update = _optional("tg_update")    # the one "update available" line
 
-__version__ = "0.3.0"
+__version__ = "0.4.1"  # 2026-10-01: was still "0.3.0" in the 0.4.0 release (update check reported the wrong version)
 
 PROTOCOL = "2024-11-05"
 START_TIMEOUT = float(os.environ.get("TOOL_GUARDIAN_START_TIMEOUT", "90"))

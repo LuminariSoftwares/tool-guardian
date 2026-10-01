@@ -298,6 +298,30 @@ The output ladder on four typical tool results:
 
 Every shortened result is archived first and can be read back with `retrieve_spill`. Token counts use `tiktoken` (cl100k) when it is installed and a conservative characters ÷ 3.5 estimate otherwise; the table above is the estimate.
 
+## What it costs per task (measured 2026-10-01)
+
+The saving above is **per request**. A tool behind the router has to be found before it can be called, and every extra
+model request re-sends the conversation, so what matters for a whole task is *requests per task*. Measured on a real
+DeepSeek Harness setup -- qwen3-coder:30b (Ollama, 64K window), 3 servers / 26 tools, 8 read-only tasks x 2 repeats, one
+fresh session per task, the same tasks with the servers mounted directly vs. behind tool-guardian:
+
+| | direct mount | tool-guardian 0.4.0 | tool-guardian 0.4.1 |
+|---|--:|--:|--:|
+| tools in the request header | 64 | 33 | 33 |
+| header tokens per request | 17,831 | 10,825 | 10,825 |
+| model requests per task | 1.9 | 4.8 | **2.8** |
+| est. input tokens per task | 39,692 | 73,609 | **38,089** |
+| wall time per task | 41 s | 75 s | 44 s |
+| tasks passed (of 16) | 6 | 8 | 7 |
+
+0.4.0 cut every request by 39 % but cost 85 % more per task: the model went search -> describe -> call, and copied the
+call-shaped `NEXT STEP` hints as plain text. 0.4.1 puts each hit's arguments into the search result (no describe round
+trip) and drops call syntax from the hints; per-task cost is now about even with a direct mount on 3 servers, and the
+saving grows with every server you add. Break-even on this setup is ~3.7 requests per task. Pass rates at n = 16 are
+inside noise. **When it pays off:** many servers, long sessions, a model that goes search -> call. **When it does not:**
+one or two small servers with a model that explores. Reproduce: the harness and raw scores are in the 2026-10-01 entry of
+the CHANGELOG.
+
 ## It catches the mistakes small models make (0.4.0)
 
 Local models get tool calls *almost* right: a count sent as `"2"`, a required argument left out, a made-up option, the

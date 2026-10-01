@@ -1,5 +1,20 @@
 # Changelog
 
+## dsh-tool-guardian 0.4.0-beta.2 / PyPI tool-guardian 0.4.1 (2026-10-01)
+
+**One-step discovery.** `search_capabilities` now shows `args: name:type, ?optional:type` under its top three hits and
+`list_capabilities(server)` under every tool, so the model can call straight from a search result; `describe_tool`
+becomes the exception. A `call_tool` rejected for its arguments now lists the tool's arguments, so the retry needs no
+describe either.
+
+**No call-shaped text in results.** `NEXT STEP` lines used to end with an example like `call_tool(server="x", ...)`;
+small local models copied that as plain text instead of making a tool call. They now name the server, tool and
+arguments in words.
+
+**Measured.** 32 DeepSeek Harness sessions (qwen3-coder:30b, 3 servers / 26 tools, 8 tasks x 2): model requests per task
+4.8 -> 2.8, estimated input tokens per task 73,609 -> 38,089 (direct mount: 39,692), wall time 75 s -> 44 s (direct:
+41 s). See the README section *What it costs per task*.
+
 ## dsh-tool-guardian 0.4.0-beta.1 / PyPI tool-guardian 0.4.0 (2026-09-27)
 
 **A benchmark anyone can re-run.** `bench/bench_tokens.py` measures the schema tokens of seven public MCP servers
