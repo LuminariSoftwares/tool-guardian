@@ -134,6 +134,26 @@ def est_tokens(obj) -> int:
     return int(len(text) / CHARS_PER_TOKEN)
 
 
+def compact_args(schema) -> str:
+    """One-line argument summary, `name:type` with `?` for optional (2026-10-01, bench1001: discovery took 4.8 model
+    requests per task because search -> describe -> call needed a describe round trip just to learn the arguments)."""
+    props = (schema or {}).get("properties") or {}
+    req = set((schema or {}).get("required") or [])
+    if not props:
+        return "(no arguments)"
+    parts = []
+    for name, spec in props.items():
+        spec = spec or {}
+        typ = spec.get("type", "any")
+        if isinstance(typ, list):
+            typ = "|".join(str(t) for t in typ)
+        item = "%s%s:%s" % ("" if name in req else "?", name, typ)
+        if spec.get("enum"):
+            item += "{" + "|".join(str(v) for v in spec["enum"][:6]) + "}"
+        parts.append(item)
+    return ", ".join(parts)
+
+
 def short(desc: str, words: int = 12) -> str:
     """A one-line purpose. The catalogue must stay cheap -- a full description per
     tool would rebuild the very payload this exists to avoid."""
@@ -649,15 +669,16 @@ class Router:
             if b.status != "ok":
                 return ("%s: %s -- %s\nThis is UNKNOWN, not an empty tool list."
                         % (server, b.status, b.error))
-            listing = "\n".join("%s.%s: %s" % (server, t.get("name"),
-                                               short(t.get("description")))
+            listing = "\n".join("%s.%s: %s\n    args: %s" % (server, t.get("name"),
+                                                             short(t.get("description")),
+                                                             compact_args(t.get("inputSchema")))
                                 for t in b.tools)
             # The next step goes in the RESULT, not only the tool description: a
             # description is read once, before the model has the catalogue; a
             # result is read at the moment the model decides what to do next.
-            return (listing + "\n\nNEXT STEP: you have not answered the user yet. "
-                    "Pick the tool above that does the job and call it now:\n"
-                    "  call_tool(server=\"%s\", tool=\"<name>\", args={...})" % server)
+            # 2026-10-01: no call-shaped example in results -- small models copied it as TEXT instead of calling.
+            return (listing + "\n\nNEXT STEP: you have not answered the user yet. Pick the tool above that does "
+                    "the job and use call_tool with server %s, that tool's name, and the args listed under it." % server)
         out = []
         for name, b in sorted(self.backends.items()):
             if b.status != "ok":
@@ -666,8 +687,8 @@ class Router:
             out.append("[%s] %d tools: %s" % (name, len(b.tools),
                        ", ".join(t.get("name", "?") for t in b.tools)))
         if out:
-            out.append("\nNEXT STEP: call list_capabilities(server=\"<name>\") for "
-                       "one server's full tool list, then call_tool to invoke.")
+            out.append("\nNEXT STEP: use search_capabilities with a keyword (or list_capabilities with one "
+                       "server name) to see a tool's args, then call_tool.")
         return "\n".join(out) or "no backends configured"
 
     def search(self, query: str, server: str = "", limit=None) -> str:
@@ -710,8 +731,8 @@ class Router:
                     hits.append((score, "%s.%s" % (name, tname),
                                  "%s.%s: %s" % (name, tname, short(t.get("description")))))
         if not hits:
-            return ("no tools match %r. NEXT STEP: list_capabilities() to see every "
-                    "server, or try another word." % query)
+            return ("no tools match %r. NEXT STEP: try another word, or use list_capabilities to see "
+                    "every server." % query)
         hits.sort(key=lambda h: (-h[0], h[1]))
         try:
             n = int(limit)
@@ -719,10 +740,16 @@ class Router:
             n = 8
         top = hits[:max(1, min(25, n))]
         out = ["%d match(es) for %r:" % (len(hits), query)]
-        out += [h[2] for h in top]
+        for i, h in enumerate(top):
+            out.append(h[2])
+            if i < 3:  # bounded: the args of the likeliest hits, so the call needs no describe round trip
+                srv, tname = h[1].split(".", 1)
+                found = self.backends[srv].find(tname)
+                if found is not None:
+                    out.append("    args: " + compact_args(found.get("inputSchema")))
         out.append("")
-        out.append('NEXT STEP: describe_tool(server="%s", tool="%s") for its arguments, '
-                   "then call_tool." % tuple(top[0][1].split(".", 1)))
+        out.append("NEXT STEP: use call_tool with the server and tool of the line that fits (server.tool) "
+                   "and the args shown under it; describe_tool only if those args are unclear.")
         return "\n".join(out)
 
     @staticmethod
@@ -876,10 +903,8 @@ class Router:
                         "list_capabilities(server=\"%s\")"
                         % (b.name, args.get("tool"),
                            ", ".join(x.get("name", "?") for x in b.tools), b.name))
-            required = (t.get("inputSchema") or {}).get("required") or []
-            example = ", ".join('"%s": <%s>' % (k, k) for k in required)
-            return (json.dumps(t, indent=2) + "\n\nNEXT STEP: call_tool(server=\"%s\", "
-                    "tool=\"%s\", args={%s})" % (b.name, t.get("name"), example))
+            return (json.dumps(t, indent=2) + "\n\nNEXT STEP: use call_tool with server %s, tool %s, "
+                    "args: %s." % (b.name, t.get("name"), compact_args(t.get("inputSchema"))))
         if name == "call_tool":
             b = self.backends.get(str(args.get("server") or ""))
             if not b:
@@ -904,13 +929,12 @@ class Router:
                     if not ok:
                         self.stats["schema_rejects"] += 1
                         self._last_meta = {"is_error": True, "rule": "schema_reject"}
-                        req = (found.get("inputSchema") or {}).get("required") or []
-                        example = ", ".join('"%s": <%s>' % (k, k) for k in req)
+                        # 2026-10-01: list the arguments, so a retry needs no describe_tool round trip.
                         return ("call_tool was not sent: the arguments do not match %s.%s's schema:\n- "
                                 % (b.name, tool)
                                 + "\n- ".join(problems)
-                                + "\n\nNEXT STEP: call_tool(server=\"%s\", tool=\"%s\", args={%s})"
-                                % (b.name, tool, example))
+                                + "\n\nNEXT STEP: retry call_tool for %s.%s with args: %s."
+                                % (b.name, tool, compact_args(found.get("inputSchema"))))
                     if fixed != sent:
                         self.stats["schema_coercions"] += 1
                     sent = fixed
@@ -952,15 +976,14 @@ class Router:
             text, meta = self.shape(text, tool=tool, is_error=is_error)
             self._last_meta = dict(meta, is_error=is_error)
             if is_error:
-                nxt = ("the tool reported an error. Check its arguments with "
-                       "describe_tool(server=\"%s\", tool=\"%s\"), then call_tool again."
-                       % (b.name, tool))
+                nxt = ("the tool reported an error. Check the arguments of %s.%s (describe_tool), then "
+                       "use call_tool again." % (b.name, tool))
             elif meta.get("spill_id"):
                 nxt = ("answer the user from this result. It was shortened; if the part you "
-                       "need is missing, retrieve_spill(id=\"%s\", grep=\"<regex>\")."
+                       "need is missing, use retrieve_spill with id %s and a grep regex."
                        % meta["spill_id"])
             else:
-                nxt = "you have the result -- answer the user now. Call another tool only if this is not enough."
+                nxt = "answer the user from this result."
             return loop_prefix + text + "\n\nNEXT STEP: " + nxt
         if name == "list_groups_with_costs":
             if tg_groups is None:
@@ -996,8 +1019,8 @@ class Router:
                 pass
             tail = ""
             if got.get("truncated"):
-                tail = ("\n\nNEXT STEP: more remains -- retrieve_spill(id=\"%s\", start_line=%d) "
-                        "or narrow it with grep=\"<regex>\"."
+                tail = ("\n\nNEXT STEP: more remains -- use retrieve_spill again with id %s and start_line %d, "
+                        "or narrow it with a grep regex."
                         % (got["id"], got["start_line"] + got["returned_lines"]))
             return ("[%s: lines %d-%d of %d]\n%s%s"
                     % (got["id"], got["start_line"], got["start_line"] + max(got["returned_lines"] - 1, 0),

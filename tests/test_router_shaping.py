@@ -46,7 +46,7 @@ def test_big_result_is_shortened_archived_and_fully_recoverable(router, tmp_path
     assert len(out) < 9000 < len(BIG)
     m = re.search(r"\[tool-guardian: showing \d+ of (\d+) chars\. Full original archived as (sp_[0-9a-f]{12})", out)
     assert m and int(m.group(1)) == len("echo: " + BIG)
-    assert 'retrieve_spill(id="%s"' % m.group(2) in out.split("NEXT STEP:")[-1]
+    assert "retrieve_spill with id %s" % m.group(2) in out.split("NEXT STEP:")[-1]
     assert "line 01500 output text" not in out                       # genuinely dropped ...
     got = router.handle("retrieve_spill", {"id": m.group(2), "grep": "line 01500 "})
     assert "L1500: line 01500 output text" in got                    # ... and genuinely recoverable
@@ -57,13 +57,27 @@ def test_retrieve_spill_pages_with_an_exact_next_call(router):
     sid = re.search(r"sp_[0-9a-f]{12}", call(router, BIG)).group(0)
     got = router.handle("retrieve_spill", {"id": sid, "max_lines": 10})
     assert got.startswith("[%s: lines 1-10 of 3000]" % sid)
-    assert 'NEXT STEP: more remains -- retrieve_spill(id="%s", start_line=11)' % sid in got
+    assert "NEXT STEP: more remains -- use retrieve_spill again with id %s and start_line 11" % sid in got
     assert "retrieve_spill failed" in router.handle("retrieve_spill", {"id": "../../etc/passwd"})
 
 
 def test_describe_tool_names_the_exact_call(router):
+    # 2026-10-01: names server, tool and args WITHOUT call syntax (models copied `call_tool(...)` as text)
     out = router.handle("describe_tool", {"server": "stub", "tool": "echo"})
-    assert out.rstrip().endswith('NEXT STEP: call_tool(server="stub", tool="echo", args={"text": <text>})')
+    assert out.rstrip().endswith("NEXT STEP: use call_tool with server stub, tool echo, args: text:string.")
+
+
+def test_search_carries_args_so_no_describe_is_needed(router):
+    out = router.handle("search_capabilities", {"query": "echo"})
+    assert "stub.echo:" in out and "    args: text:string" in out
+    assert "call_tool(" not in out and "describe_tool(" not in out
+
+
+def test_success_results_carry_no_call_syntax(router):
+    out = router.handle("call_tool", {"server": "stub", "tool": "echo", "args": {"text": "hi"}})
+    assert "call_tool(" not in out and out.rstrip().endswith("NEXT STEP: answer the user from this result.")
+    bad = router.handle("call_tool", {"server": "stub", "tool": "echo", "args": {}})
+    assert "call_tool was not sent" in bad and "args: text:string" in bad and "call_tool(" not in bad
 
 
 def test_wrong_names_point_at_the_exact_recovery_call(router):
