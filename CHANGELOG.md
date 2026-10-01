@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.4.0-beta.1 / PyPI tool-guardian 0.4.0 (2026-09-27)
+
+**A benchmark anyone can re-run.** `bench/bench_tokens.py` measures the schema tokens of seven public MCP servers
+(95 tools, recorded in `bench/fixtures/catalogs/`) against the router's own tools, and runs the output ladder on four
+typical tool results. Result: 20,005 tokens per request without tool-guardian, 934 with it (95.3 % less). The README's
+new *Measured savings* section is its output.
+
+**Recall tracking.** The router counts, per tool, how many shortened results were archived and how many the model read
+back with `retrieve_spill`; `/toolguardian` shows `recall after shortening: bash 2 of 14 (14%), ...`. A tool the model
+keeps recalling is being shortened too hard.
 
 **Find a tool by keyword.** A fourth router tool, `search_capabilities(query, server?, limit?)`, ranks tools across every
 connected server by keyword (name hits beat description hits) and returns only the top few lines, in the same

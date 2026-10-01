@@ -277,7 +277,7 @@ def build_skill_tools(skills):
 def skills_report(skills):
     """Print the saving report for skills."""
     # Report TOKENS, not bytes, so the figure is comparable to the README's
-    # tool numbers. CHARS_PER_TOKEN is the file's own estimator. [O5]
+    # tool numbers. CHARS_PER_TOKEN is the file's own estimator.
     total = int(sum(s["bytes"] for s in skills) / CHARS_PER_TOKEN)
     catalogue = int(len("; ".join("%s (%s)" % (s["name"], short(s["description"]))
                                   for s in skills)) / CHARS_PER_TOKEN)
@@ -587,7 +587,13 @@ class Router:
         self.stats = {"calls": 0, "errors": 0, "shaped": 0, "spilled": 0,
                       "original_chars": 0, "final_chars": 0,
                       "schema_rejects": 0, "schema_coercions": 0,
-                      "loop_warnings": 0, "loop_blocks": 0}
+                      "loop_warnings": 0, "loop_blocks": 0,
+                      "recalls": {}}
+        # Spill id -> the tool whose result it holds, and the ids already counted
+        # as recalled. A shortened result the model keeps reading back is a result being
+        # shortened too hard, and that is only visible if the two ends are joined up.
+        self._spill_origin = {}
+        self._recalled = set()
         # (key, result_hash) for the last 20 call_tool calls. The loop guard's whole
         # memory: a model retrying an identical call is invisible per-call, so it
         # is only visible by remembering what the last few calls returned.
@@ -783,6 +789,12 @@ class Router:
                 meta["spill_id"] = saved["id"]
                 shaped += "\n" + tg_spill.notice(saved["id"], len(text), len(out["text"]))
                 self.stats["spilled"] += 1
+                try:
+                    key = tool or "unknown"
+                    self.stats["recalls"].setdefault(key, {"spilled": 0, "recalled": 0})["spilled"] += 1
+                    self._spill_origin[saved["id"]] = key
+                except Exception:  # a counter must never cost the caller its result
+                    pass
             except OSError as exc:
                 log("spill failed for %s: %s -- returning the original" % (tool, exc))
                 shaped = text[:LEGACY_CAP]
@@ -843,8 +855,8 @@ class Router:
         # Skills are handled on the RAW args, BEFORE _coerce. _coerce aliases
         # "name" -> "server" and POPS it (it exists so a model saying
         # {"name": "nocodb"} still reaches the right server), which silently ate
-        # read_skill's own "name" argument. Caught by the overseer probe, not by
-        # any test the lane wrote. [O5] 2026-09-09
+        # read_skill's own "name" argument. Caught by a contract probe, not by
+        # the module's own tests.
         if name in ("list_skills", "read_skill"):
             return self._handle_skill(name, dict(args or {}))
         args = self._coerce(args, name)
@@ -973,6 +985,15 @@ class Router:
                             grep=str(args.get("grep") or ""))
             if not got.get("ok"):
                 return "retrieve_spill failed: %s\n\nNEXT STEP: use the id exactly as the notice gave it (sp_ + 12 hex)." % got.get("error")
+            try:
+                # The archive came back, so the model wanted the original: count it once
+                # against the tool that produced it. An id we never handed out counts nothing.
+                origin = self._spill_origin.get(got.get("id"))
+                if origin and origin in self.stats["recalls"] and got.get("id") not in self._recalled:
+                    self._recalled.add(got.get("id"))
+                    self.stats["recalls"][origin]["recalled"] += 1
+            except Exception:  # a counter must never cost the caller its archive
+                pass
             tail = ""
             if got.get("truncated"):
                 tail = ("\n\nNEXT STEP: more remains -- retrieve_spill(id=\"%s\", start_line=%d) "
@@ -984,7 +1005,7 @@ class Router:
         return "unknown router tool %r\n\nNEXT STEP: list_capabilities()" % name
 
     def _handle_skill(self, name: str, args: dict) -> str:
-        """Skills budget (TJ 2026-09-08): the same catalogue-on-demand shape the
+        """Skills budget: the same catalogue-on-demand shape the
         three router tools use, applied to SKILL.md files. Accepts "skill" or
         "name" for the skill id."""
         args = dict(args or {})
@@ -1099,7 +1120,7 @@ def build_all_tools(backends: dict) -> list:
     skills are configured. The core three lead because their positions are load
     bearing: the bridge, the self-tests and the pre-0.3.0 orderings all read
     names[:3], and a stable leading triple is what keeps a long session's prompts
-    from reshuffling every time a tool is added. [O5] 2026-09-09"""
+    from reshuffling every time a tool is added."""
     tools = build_router_tools(backends)
     head = [t for n in CORE_TOOLS for t in tools if t["name"] == n]
     tail = [t for t in tools if t["name"] not in CORE_TOOLS]

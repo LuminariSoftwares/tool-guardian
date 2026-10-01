@@ -8,9 +8,9 @@ The spill store: before a tool result is shortened lossily, the FULL original is
 here, and the model can read it back in bounded windows or grep it. Ids are content hashes,
 so saving the same text twice is a no-op.
 
-History: library written by the local model through delegate_task (dlg_20260919_183235,
-10/10 on the overseer's contract probe); the overseer removed unused imports and bare
-excepts and recalibrated two selftest fixtures that contradicted the contract. MIT licensed.
+History: written by a local model against a contract probe (10/10), then reviewed by
+hand: unused imports and bare excepts removed, and two selftest fixtures that contradicted
+the contract recalibrated. MIT licensed.
 """
 
 from __future__ import annotations
@@ -474,7 +474,7 @@ def missing_id_refused(tmpdir):
 
 def prune_removes_oldest_pairs(tmpdir):
     # save() prunes after every new file, so build the backlog under a roomy store and
-    # prune through a SECOND store over the same directory (overseer fixture, 2026-09-19).
+    # prune through a SECOND store over the same directory (regression fixture).
     roomy = SpillStore(root=tmpdir, keep=100)
     ids = []
     for n in range(5):

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tool-guardian"
-version = "0.3.0"
-description = "An MCP router that keeps tool definitions from filling the context window — it fronts your MCP servers behind three generic tools and discovers the rest on demand."
+version = "0.4.0"
+description = "An MCP router that keeps tool definitions from filling the context window — it fronts your MCP servers behind four small generic tools and discovers the rest on demand."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }

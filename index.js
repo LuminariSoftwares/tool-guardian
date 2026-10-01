@@ -265,6 +265,28 @@ export function callChecksLine(routerStats = {}, native = {}) {
 }
 
 /**
+ * The /toolguardian recall line: per tool, how many of the results the output ladder
+ * shortened and archived the model then read back with retrieve_spill. A tool high on
+ * this list is being shortened too hard -- the model keeps paying to undo the saving.
+ *
+ * @param {Record<string, { spilled?: number, recalled?: number }>} [recalls]
+ * @returns {string} the line, or '' when nothing was archived
+ */
+export function recallLine(recalls) {
+  const r = (recalls !== null && typeof recalls === 'object') ? recalls : {}
+  const entries = Object.entries(r)
+    .map(([tool, counts]) => ({ tool, spilled: counter(counts?.spilled), recalled: counter(counts?.recalled) }))
+    .filter(entry => entry.spilled > 0)
+    .sort((a, b) => (b.spilled - a.spilled) || a.tool.localeCompare(b.tool))
+  if (entries.length === 0) return ''
+  const shown = entries.slice(0, 5)
+    .map(entry => `${entry.tool} ${entry.recalled} of ${entry.spilled} `
+      + `(${Math.round(entry.recalled / entry.spilled * 100)}%)`)
+  return 'recall after shortening: ' + shown.join(', ')
+    + (entries.length > 5 ? ` (+${entries.length - 5} more)` : '')
+}
+
+/**
  * Deny `names` for one agent. The registry refuses a restriction that names a tool this
  * agent cannot see, and says which names it does know -- so on that refusal the known list
  * is read from the message and the intersection is retried once. No registry internals and
@@ -968,6 +990,8 @@ export function apply(ctx, config) {
       const stats = await live.request('stats', {}, 10000)
       lines.push(`output ladder: ${options.ladder.enabled ? 'on' : 'off'} -- ${stats.shaped ?? 0} results shaped, ${stats.spilled ?? 0} archived, ${stats.original_chars ?? 0} -> ${stats.final_chars ?? 0} chars since load`)
       lines.push(callChecksLine(stats, loopGuard.stats))
+      const r = recallLine(stats.recalls)
+      if (r !== '') lines.push(r)
     } catch { /* counters are a courtesy */ }
     try {
       const summary = await live.request('summary', { scope: 'current' }, 15000)

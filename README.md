@@ -23,7 +23,7 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-An MCP server that sits in front of your other MCP servers and exposes **three generic tools** instead of dozens of specific ones — discovering the rest **on demand** — so tool definitions stop eating your context window before the model reads a word.
+An MCP server that sits in front of your other MCP servers and exposes **four small generic tools** (list, search, describe, call) instead of dozens of specific ones — discovering the rest **on demand** — so tool definitions stop eating your context window before the model reads a word.
 
 Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-guardian): **Context Guardian compacts the conversation before the window fills; Tool Guardian keeps the tools from filling it in the first place.** Two halves of the same problem.
 
@@ -74,7 +74,7 @@ You have two ways to deal with that today, and both cost you something:
 | Load fewer MCP servers | You lose the capability entirely |
 | Live with it | Two-thirds of the window is gone before you type |
 
-Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just three tools plus a one-line catalogue of server names (~300 tokens). The full schema for a tool is fetched only when the model asks for it:
+Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just four small tools plus a one-line catalogue of server names (~300 tokens). The full schema for a tool is fetched only when the model asks for it:
 
 ```
 list_capabilities(server?)      one line per tool — names and purpose
@@ -249,7 +249,7 @@ Everything your servers can do is still reachable — the model just discovers i
 tool-guardian --selftest
 ```
 
-Starts your configured servers, prints the catalogue, and reports the tokens the three router tools cost versus loading every server's tools directly — e.g. *"router tools cost ~310 tokens vs ~28,700 for the full set behind them → ~28,390 freed on every request."* It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
+Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. *"router tools cost ~310 tokens vs ~28,700 for the full set behind them → ~28,390 freed on every request."* It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
 
 Under DSH, type **`/toolguardian`** in a session for the same report from the running plugin: each server's status and tool count, the tokens freed on every request, active groups, ladder and bypass counters, and the update line.
 
@@ -270,7 +270,35 @@ Definitions are half the problem; one 40 KB build log is the other half. Every `
 
 `list_groups_with_costs` prices each tool group in context tokens, and every router call is logged (argument *values* never are) to `~/.tool-guardian/calls.jsonl` so you can measure whether your model actually uses the router.
 
-## It catches the mistakes small models make (unreleased)
+## Measured savings
+
+Reproduce it yourself: `python bench/bench_tokens.py` (no network, no model; `--json` for machine output). The catalogs are the real `tools/list` answers of seven public MCP servers, recorded in `bench/fixtures/catalogs/`.
+
+| server | tools | tokens of tool schemas |
+|---|--:|--:|
+| everything | 13 | 1,610 |
+| filesystem | 14 | 2,500 |
+| github | 26 | 5,094 |
+| memory | 9 | 1,347 |
+| n8n-mcp | 7 | 2,826 |
+| playwright | 25 | 5,443 |
+| sequential-thinking | 1 | 1,185 |
+| **all seven** | **95** | **20,005** |
+
+**Every request:** 20,005 tokens of tool schemas without tool-guardian, 934 with it (**95.3 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 3 % full.
+
+The output ladder on four typical tool results:
+
+| output | tool | before (chars) | after (chars) | how |
+|---|---|--:|--:|---|
+| 3,000-line build log with one error | bash | 115,945 | 4,540 | head, samples, the error line, tail, exit code |
+| 400-item JSON array | http_get | 29,521 | 730 | keys, first and last items, counts |
+| 3-hunk unified diff | git_diff | 41,764 | 1,363 | every change plus 2 lines of context |
+| 1,500-row CSV | query | 44,882 | 354 | header, first and last rows, counts |
+
+Every shortened result is archived first and can be read back with `retrieve_spill`. Token counts use `tiktoken` (cl100k) when it is installed and a conservative characters ÷ 3.5 estimate otherwise; the table above is the estimate.
+
+## It catches the mistakes small models make (0.4.0)
 
 Local models get tool calls *almost* right: a count sent as `"2"`, a required argument left out, a made-up option, the
 same failing call repeated until the context runs out. The router now sits in front of those mistakes:
