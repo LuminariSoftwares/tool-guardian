@@ -1,0 +1,11 @@
+I need to find where the function `restore_head` is defined in the studio's Python code using MCP tools. Let me search for this function.
+
+<function=search_capabilities>
+<parameter=query>
+restore_head
+</parameter>
+<parameter=server>
+luminari-capabilities
+</parameter>
+</function>
+</tool_call>

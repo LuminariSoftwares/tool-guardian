@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-guardian",
-  "version": "0.4.0-beta.2",
+  "version": "0.5.0-beta.1",
   "description": "Tool Guardian as a native DeepSeek Harness (DSH) bundle: keeps tool definitions out of the context window by fronting your MCP servers behind a small native router. A bridge to the Python tool-guardian, not a rewrite.",
   "type": "module",
   "main": "index.js",
@@ -10,6 +10,8 @@
   },
   "files": [
     "index.js",
+    "text_toolcalls.js",
+    "text_toolcall_repair.js",
     "update_check.js",
     "setup.mjs",
     "cordis.patch.yml",
@@ -22,6 +24,8 @@
     "tg_setup.py",
     "tg_state.py",
     "tg_update.py",
+    "tg_rank.py",
+    "tg_ceiling.py",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -34,7 +38,8 @@
   "scripts": {
     "check": "node --check index.js && node --check setup.mjs",
     "setup": "node setup.mjs",
-    "selftest": "python modules/tg_bridge.py --selftest"
+    "selftest": "python modules/tg_bridge.py --selftest",
+    "test:node": "node tests/text_toolcalls_smoke.mjs text_toolcalls.js && node text_toolcalls.js --selftest && node text_toolcall_repair.js --selftest && node tests/text_repair_seam_smoke.mjs"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

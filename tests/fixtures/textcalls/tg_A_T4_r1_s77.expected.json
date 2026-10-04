@@ -1,0 +1,11 @@
+{
+ "calls": [
+  {
+   "name": "mcp__luminari-scripts__lessons_search",
+   "args": {
+    "id": 588
+   }
+  }
+ ],
+ "rest_starts_with": "I need to find the coding lesson with ID 588 from the studio"
+}

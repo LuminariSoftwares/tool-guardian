@@ -1,0 +1,11 @@
+I need to find where the function `restore_head` is defined in the studio's Python code. I'll use the MCP tools to search the codebase for this function.
+
+<function=mcp__codebase-memory__search_graph>
+<parameter=project>
+luminari-studio
+</parameter>
+<parameter=query>
+restore_head
+</parameter>
+</function>
+</tool_call>

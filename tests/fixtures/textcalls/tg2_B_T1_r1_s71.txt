@@ -1,0 +1,11 @@
+I'll use the studio's MCP tools to find where the function `restore_head` is defined in the Python code.
+
+<function=search_capabilities>
+<parameter=query>
+restore_head
+</parameter>
+<parameter=server>
+codebase-memory
+</parameter>
+</function>
+</tool_call>

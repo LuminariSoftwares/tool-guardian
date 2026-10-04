@@ -1,0 +1,8 @@
+I need to find which NocoDB table studio records of kind "coding_lesson" go into and which fields are required. I'll use the `mcp__luminari-scripts__table_for` tool to get this information.
+
+<function=mcp__luminari-scripts__table_for>
+<parameter=kind>
+coding_lesson
+</parameter>
+</function>
+</tool_call>

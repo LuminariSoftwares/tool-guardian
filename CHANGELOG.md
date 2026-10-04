@@ -1,5 +1,30 @@
 # Changelog
 
+## dsh-tool-guardian 0.5.0-beta.1 / PyPI tool-guardian 0.5.0 (2026-10-04)
+
+**Tool calls written as text are repaired (DSH engine).** Local models sometimes write a tool call into the reply text
+instead of making it, and the session ends on a call that never ran. The plugin now spots those text calls in the
+model's stream and turns them into real calls. Benchmark (atlas qwen3-coder:30b, 8 tasks x 4 runs):
+
+| measure | 0.4.0-beta.2 (16 sessions) | this release (32 sessions) |
+|---|---|---|
+| sessions ending on a text-only tool call | 7/16 | 0/32 |
+| sessions where a text call was repaired into a real call | -- | 12/32 |
+| tasks passed | 7/16 | 22/32 |
+
+`textToolCallRepair: { enabled: false }` or `TOOL_GUARDIAN_TEXTCALL_REPAIR=0` turns it off; `logOnly: true` only logs.
+
+- **Empty results say so.** When a backend tool returns nothing, the router now tells the model the result was empty
+  and to try another route, instead of "answer the user from this result" (the model used to answer "not found").
+  `TG_EMPTY_NUDGE=0` turns it off.
+- **`server.tool` names work in `call_tool`.** `list_capabilities` prints `server.tool`; calling that exact name used
+  to fail with "has no tool".
+- **Discovery ceiling.** A model that keeps listing or searching tools without calling one is stopped after
+  `discoveryLimit` (default 8) discovery calls in a row; any real call resets the count.
+- **Per-server search hints (opt-in).** A backend may carry a `hints` word list that boosts its tools in
+  `search_capabilities`. Not set by default: an A/B on two code-search tasks showed no gain (3/16 with and without).
+- `tg_rank.py` and `tg_ceiling.py` now ship in both the npm package and the wheel.
+
 ## dsh-tool-guardian 0.4.0-beta.2 / PyPI tool-guardian 0.4.1 (2026-10-01)
 
 **One-step discovery.** `search_capabilities` now shows `args: name:type, ?optional:type` under its top three hits and

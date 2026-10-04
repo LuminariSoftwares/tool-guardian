@@ -1,0 +1,9 @@
+{
+ "calls": [
+  {
+   "name": "mcp__luminari-scripts__list_gigs",
+   "args": {}
+  }
+ ],
+ "rest_starts_with": "I'll use the MCP tool to find out how many Fiverr gig produc"
+}

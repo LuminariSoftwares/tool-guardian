@@ -1,0 +1,11 @@
+{
+ "calls": [
+  {
+   "name": "list_capabilities",
+   "args": {
+    "server": "luminari-scripts"
+   }
+  }
+ ],
+ "rest_starts_with": "I need to find which NocoDB table studio records of kind \"co"
+}

@@ -1,0 +1,11 @@
+I need to find which file defines a function named "to_ledger" in the studio's Python code. I'll use the MCP tools to search the codebase for this function.
+
+<function=mcp__codebase-memory__search_graph>
+<parameter=project>
+luminari-studio
+</parameter>
+<parameter=query>
+to_ledger
+</parameter>
+</function>
+</tool_call>

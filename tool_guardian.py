@@ -89,8 +89,10 @@ tg_spill = _optional("tg_spill")      # archive of the full original behind ever
 tg_groups = _optional("tg_groups")    # tool groups priced in context tokens
 tg_state = _optional("tg_state")      # session ids, state.json, call-log summary, Claude Code hook
 tg_update = _optional("tg_update")    # the one "update available" line
+tg_rank = _optional("tg_rank")        # search scoring + per-server "hints" (P45 B4, C-Hints)
+tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped (P45 B6, C-Ceiling)
 
-__version__ = "0.4.1"  # 2026-10-01: was still "0.3.0" in the 0.4.0 release (update check reported the wrong version)
+__version__ = "0.5.0"  # 2026-10-04 release; 2026-10-01: was still "0.3.0" in the 0.4.0 release (update check reported the wrong version)
 
 PROTOCOL = "2024-11-05"
 START_TIMEOUT = float(os.environ.get("TOOL_GUARDIAN_START_TIMEOUT", "90"))
@@ -376,6 +378,44 @@ def render_result(res) -> tuple:
     return "\n".join(parts), bool(res.get("isError"))
 
 
+_COUNT_KEYS = ("total_results", "total", "count", "total_count", "total_grep_matches", "num_results")
+_EMPTY_TEXT = re.compile(r"^\s*(no (results|matches)( found)?|0 results|nothing found)\.?\s*$", re.I)
+
+
+def looks_empty(text) -> bool:
+    """True when a tool result says it found NOTHING: [], a JSON object whose lists and maps are
+    all empty and that carries a zero count or a list field, or a bare "no results". Conservative
+    on purpose: an object with an "error" key, any non-empty list, or unrecognised prose is not
+    empty. (2026-10-03, P45 B4: a stale index's empty answer read as proof of absence.)"""
+    s = str(text or "").strip()
+    if not s:
+        return False
+    if _EMPTY_TEXT.match(s):
+        return True
+    try:
+        obj = json.loads(s)
+    except ValueError:
+        return False
+    if isinstance(obj, list):
+        return len(obj) == 0
+    if not isinstance(obj, dict) or "error" in obj:
+        return False
+    containers = [v for v in obj.values() if isinstance(v, (list, dict))]
+    if any(len(v) for v in containers):
+        return False
+    zero_count = any(obj.get(k) == 0 and not isinstance(obj.get(k), bool) for k in _COUNT_KEYS)
+    return zero_count or any(isinstance(v, list) for v in obj.values())
+
+
+def _bare_tool(backend, tool: str) -> str:
+    """The catalogue prints `server.tool`; models copy it. Accept it when the bare name exists
+    and the full name does not (18 ROUTER ERRORs in 25 P45 B4 sessions)."""
+    pre = backend.name + "."
+    if tool.startswith(pre) and backend.find(tool) is None and backend.find(tool[len(pre):]) is not None:
+        return tool[len(pre):]
+    return tool
+
+
 # ------------------------------------------------------ argument checking ------
 
 def _coerce_arg(value, want):
@@ -620,6 +660,9 @@ class Router:
         self._recent = collections.deque(maxlen=20)
         # Every call-log row carries this, so "the last session" is a question the log can answer.
         self.session_id = tg_state.new_session_id() if tg_state is not None else ""
+        # C-Ceiling (P45 B6): discovery calls since the last call_tool, capped at discoveryLimit (default 8).
+        self._ceiling = (tg_ceiling.DiscoveryCeiling(int(self.options.get("discoveryLimit") or 8))
+                         if tg_ceiling is not None else None)
 
     def start(self, servers: dict = None) -> None:
         """Start every backend AT ONCE. Backend.start() never raises (a failure becomes
@@ -719,14 +762,18 @@ class Router:
             for t in b.tools:
                 tname = str(t.get("name") or "")
                 low_desc = short(t.get("description")).lower()
-                score = 0
-                for tok in tokens:
-                    if tok in tname.lower():
-                        score += 3
-                    if tok == name.lower():
-                        score += 2
-                    if tok in low_desc:
-                        score += 1
+                if tg_rank is not None:
+                    score = tg_rank.score({"name": tname, "description": low_desc}, name, tokens,
+                                          (b.spec or {}).get("hints"))
+                else:
+                    score = 0
+                    for tok in tokens:
+                        if tok in tname.lower():
+                            score += 3
+                        if tok == name.lower():
+                            score += 2
+                        if tok in low_desc:
+                            score += 1
                 if score:
                     hits.append((score, "%s.%s" % (name, tname),
                                  "%s.%s: %s" % (name, tname, short(t.get("description")))))
@@ -886,6 +933,10 @@ class Router:
         # the module's own tests.
         if name in ("list_skills", "read_skill"):
             return self._handle_skill(name, dict(args or {}))
+        if self._ceiling is not None:
+            refusal = self._ceiling.note(name)
+            if refusal:
+                return refusal
         args = self._coerce(args, name)
         if name == "list_capabilities":
             return self.catalogue(str(args.get("server") or ""))
@@ -897,7 +948,7 @@ class Router:
             if not b:
                 return ("no server named %r. Known: %s\n\nNEXT STEP: list_capabilities()"
                         % (args.get("server"), ", ".join(sorted(self.backends))))
-            t = b.find(str(args.get("tool") or ""))
+            t = b.find(_bare_tool(b, str(args.get("tool") or "")))
             if not t:
                 return ("%s has no tool %r. Available: %s\n\nNEXT STEP: "
                         "list_capabilities(server=\"%s\")"
@@ -910,7 +961,7 @@ class Router:
             if not b:
                 return ("no server named %r. Known: %s\n\nNEXT STEP: list_capabilities()"
                         % (args.get("server"), ", ".join(sorted(self.backends))))
-            tool = str(args.get("tool") or "")
+            tool = _bare_tool(b, str(args.get("tool") or ""))
             sent = args.get("args") or {}
             # ---- T2: check the arguments against the tool's own schema first. A
             # call that cannot possibly work should cost a string comparison here,
@@ -978,6 +1029,13 @@ class Router:
             if is_error:
                 nxt = ("the tool reported an error. Check the arguments of %s.%s (describe_tool), then "
                        "use call_tool again." % (b.name, tool))
+            elif looks_empty(text) and os.environ.get("TG_EMPTY_NUDGE", "1") not in _OFF:
+                self.stats["empty_nudges"] = self.stats.get("empty_nudges", 0) + 1
+                self._last_meta["rule"] = "empty_nudge"
+                nxt = ("this returned nothing. An empty result is not proof the thing does not exist -- "
+                       "this server's index can be stale or the arguments too narrow. Before telling the "
+                       "user it is not there, use list_capabilities with no server to find another server "
+                       "that answers the same question, or change the arguments.")
             elif meta.get("spill_id"):
                 nxt = ("answer the user from this result. It was shortened; if the part you "
                        "need is missing, use retrieve_spill with id %s and a grep regex."

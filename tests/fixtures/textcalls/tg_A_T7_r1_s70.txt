@@ -1,0 +1,8 @@
+I'll check if the studio's n8n service is up and find its URL using the available MCP tools.
+
+<function=mcp__luminari-scripts__service_status>
+<parameter=service>
+n8n
+</parameter>
+</function>
+</tool_call>

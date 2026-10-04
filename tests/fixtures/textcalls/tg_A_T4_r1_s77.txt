@@ -1,0 +1,8 @@
+I need to find the coding lesson with ID 588 from the studio's records. Let me use the lessons_search tool to locate this specific lesson.
+
+<function=mcp__luminari-scripts__lessons_search>
+<parameter=id>
+588
+</parameter>
+</function>
+</tool_call>

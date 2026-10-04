@@ -1,0 +1,12 @@
+{
+ "calls": [
+  {
+   "name": "mcp__codebase-memory__search_graph",
+   "args": {
+    "project": "luminari-studio",
+    "query": "to_ledger"
+   }
+  }
+ ],
+ "rest_starts_with": "I need to find which file defines a function named \"to_ledge"
+}

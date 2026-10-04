@@ -1,0 +1,14 @@
+I need to find the coding lesson with ID 588 using the studio's MCP tools. Let me use the lessons_search tool to locate this specific lesson.
+
+<function=call_tool>
+<parameter=server>
+luminari-scripts
+</parameter>
+<parameter=tool>
+lessons_search
+</parameter>
+<parameter=args>
+{"query":"588"}
+</parameter>
+</function>
+</tool_call>

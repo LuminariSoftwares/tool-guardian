@@ -1,0 +1,11 @@
+{
+ "calls": [
+  {
+   "name": "list_capabilities",
+   "args": {
+    "server": "luminari-scripts"
+   }
+  }
+ ],
+ "rest_starts_with": "I need to check if the studio's n8n service is up and find i"
+}

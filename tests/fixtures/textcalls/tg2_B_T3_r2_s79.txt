@@ -1,0 +1,8 @@
+I need to find which NocoDB table studio records of kind "coding_lesson" go into and which fields are required. I'll use the luminari-scripts tools to look this up.
+
+<function=list_capabilities>
+<parameter=server>
+luminari-scripts
+</parameter>
+</function>
+</tool_call>

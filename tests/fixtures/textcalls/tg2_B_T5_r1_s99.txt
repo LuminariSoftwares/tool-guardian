@@ -1,0 +1,14 @@
+I need to find out which vault folder a dated (non-living) Claude session note belongs in. Let me use the luminari-scripts tools to find this information.
+
+<function=call_tool>
+<parameter=server>
+luminari-scripts
+</parameter>
+<parameter=tool>
+vault_path
+</parameter>
+<parameter=args>
+{"type": "claudesession"}
+</parameter>
+</function>
+</tool_call>

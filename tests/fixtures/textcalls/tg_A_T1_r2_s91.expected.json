@@ -1,0 +1,12 @@
+{
+ "calls": [
+  {
+   "name": "mcp__codebase-memory__search_graph",
+   "args": {
+    "project": "luminari-studio",
+    "query": "restore_head"
+   }
+  }
+ ],
+ "rest_starts_with": "I need to find where the function `restore_head` is defined "
+}

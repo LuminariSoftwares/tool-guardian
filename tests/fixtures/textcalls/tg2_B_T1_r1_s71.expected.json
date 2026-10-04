@@ -1,0 +1,12 @@
+{
+ "calls": [
+  {
+   "name": "search_capabilities",
+   "args": {
+    "query": "restore_head",
+    "server": "codebase-memory"
+   }
+  }
+ ],
+ "rest_starts_with": "I'll use the studio's MCP tools to find where the function `"
+}

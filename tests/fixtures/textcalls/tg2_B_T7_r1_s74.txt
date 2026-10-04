@@ -1,0 +1,8 @@
+I need to check if the studio's n8n service is up and find its URL using the MCP tools. Let me use the service_status tool to check this.
+
+<function=list_capabilities>
+<parameter=server>
+luminari-scripts
+</parameter>
+</function>
+</tool_call>

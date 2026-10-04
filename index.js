@@ -42,6 +42,10 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import Schema from '@deepseek-ai/schemastery'
 import { checkForUpdate, defaultCacheFile } from './update_check.js'
+import { parseTextToolCalls } from './text_toolcalls.js'
+import { repairStream, toolsOf } from './text_toolcall_repair.js'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 
 export const name = 'dsh-tool-guardian'
 
@@ -130,6 +134,12 @@ export const Config = Schema.object({
   spillDir: Schema.string().default('')
     .description('Archive of full originals (TOOL_GUARDIAN_SPILL_DIR overrides; default ~/.tool-guardian/spill).'),
   spillKeep: Schema.natural().default(500),
+  textToolCallRepair: Schema.object({
+    enabled: Schema.boolean().default(true)
+      .description('Turn a tool call the model wrote as TEXT (<function=NAME>...) into a real tool call (P45 C-Repair).'),
+    logOnly: Schema.boolean().default(false)
+      .description('Only log the text calls it would repair; change nothing.'),
+  }).default({}),
 })
 
 /**
@@ -181,6 +191,11 @@ export function resolveOptions(section, env = process.env) {
     },
     spillDir: env.TOOL_GUARDIAN_SPILL_DIR?.trim() || section.spillDir || '',
     spillKeep: section.spillKeep ?? 500,
+    textToolCallRepair: {
+      enabled: section.textToolCallRepair?.enabled !== false
+        && !['0', 'false', 'False', 'off', 'no'].includes(env.TOOL_GUARDIAN_TEXTCALL_REPAIR ?? ''),
+      logOnly: section.textToolCallRepair?.logOnly === true,
+    },
   }
 }
 
@@ -190,6 +205,32 @@ export function resolveOptions(section, env = process.env) {
 // so an agent that re-runs one identical command pays for the same bytes until the
 // context window fills. Same thresholds and the same two strings as tool_guardian.py's
 // call_tool guard, so a refusal reads identically on either side of the bridge.
+
+/** C-Repair log line, beside the Python router's call log. Never throws. */
+function logTextCall(entry, env = process.env) {
+  try {
+    const path = env.TOOL_GUARDIAN_CALL_LOG ?? join(homedir(), '.tool-guardian', 'calls.jsonl')
+    if (!path) return
+    mkdirSync(dirname(path), { recursive: true })
+    appendFileSync(path, JSON.stringify(entry) + '\n', 'utf8')
+  } catch { /* the log is best-effort; the stream is not */ }
+}
+
+/** logOnly mode: pass every chunk through unchanged; at finish, log the text calls a repair would have made. */
+async function* observeTextCalls(source, names, schemas, log) {
+  let text = ''
+  let structured = false
+  for await (const chunk of source) {
+    if (chunk?.type === 'text-delta') text += chunk.text
+    if (chunk?.type === 'block-start' && chunk.blockType === 'tool-call') structured = true
+    if (chunk?.type === 'finish' && !structured) {
+      try {
+        for (const call of parseTextToolCalls(text, names, schemas).calls) log({ tool: call.name })
+      } catch { /* never breaks the stream */ }
+    }
+    yield chunk
+  }
+}
 
 /** $TG_LOOP_GUARD values that switch the guard off, in any case. */
 const LOOP_OFF = new Set(['0', 'false', 'off', 'no'])
@@ -934,6 +975,26 @@ export function apply(ctx, config) {
   ctx.on('agent/disposed', ({ agent }) => {
     masks.get(agent)?.dispose?.()
     masks.delete(agent)
+  })
+
+  // ── C-Repair (P45 B2, 2026-10-03): a tool call the model wrote as TEXT becomes a real tool call ──
+  // qwen3-coder ended 7 of 16 tg2 sessions on a text call the harness never ran. Fails open: any
+  // setup error leaves the provider stream untouched. One call-log line per call (the Python router's
+  // TOOL_GUARDIAN_CALL_LOG, default ~/.tool-guardian/calls.jsonl; "" disables).
+  ctx.on('llm/stream', (options, next) => {
+    try {
+      const repair = resolveOptions(source()).textToolCallRepair
+      if (!repair.enabled) return next()
+      const { names, schemas } = toolsOf(options)
+      if (names.length === 0) return next()
+      const event = repair.logOnly ? 'text_toolcall_seen' : 'text_toolcall_repaired'
+      const log = ({ tool }) => logTextCall({ ts: new Date().toISOString(), event, tool, session: String(options?.sessionId ?? '') })
+      if (repair.logOnly) return observeTextCalls(next(), names, schemas, log)
+      return repairStream(next(), { toolNames: names, schemas, onRepair: log })
+    } catch (error) {
+      ctx.logger.debug(`tool-guardian text-call repair: ${error.message}; stream untouched`)
+      return next()
+    }
   })
 
   // Optional settings: the plugin runs from its patch-row config when no

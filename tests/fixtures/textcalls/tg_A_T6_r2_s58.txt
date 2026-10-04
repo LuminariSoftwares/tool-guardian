@@ -1,0 +1,5 @@
+I'll use the MCP tool to find how many Fiverr gig production presets the studio has.
+
+<function=mcp__luminari-scripts__list_gigs>
+</function>
+</tool_call>

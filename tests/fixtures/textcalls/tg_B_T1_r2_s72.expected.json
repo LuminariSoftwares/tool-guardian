@@ -1,0 +1,12 @@
+{
+ "calls": [
+  {
+   "name": "search_capabilities",
+   "args": {
+    "query": "restore_head",
+    "server": "luminari-capabilities"
+   }
+  }
+ ],
+ "rest_starts_with": "I'll find where the function `restore_head` is defined in th"
+}
