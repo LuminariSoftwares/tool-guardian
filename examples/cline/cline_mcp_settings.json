@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "tool-guardian": {
+      "command": "tool-guardian",
+      "args": [],
+      "disabled": false,
+      "autoApprove": ["list_capabilities", "search_capabilities", "describe_tool"]
+    }
+  }
+}

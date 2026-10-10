@@ -6,10 +6,16 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.9", "3.11"]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.9"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,15 +25,29 @@ jobs:
         with:
           node-version: "22"
       - run: npm install --no-package-lock --legacy-peer-deps
-      - run: pip install -r requirements-dev.txt
-      - run: pytest -q
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q
 
   node:
-    runs-on: ubuntu-latest
+    name: node (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5   # the bundle's bridge and setup start the Python router
+        with:
+          python-version: "3.11"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - run: npm install --no-package-lock --legacy-peer-deps
       - run: npm run check
+      - run: npm run test:node
+      - run: node tests/dsh_smoke.mjs
+      - run: node tests/probe_dsh_mvp.mjs
+      - run: node tests/probe_dsh_loopguard.mjs
+      - run: node tests/probe_recall_line.mjs
+      - run: node tests/probe_setup.mjs
