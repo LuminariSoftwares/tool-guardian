@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+**Works with Claude Code, OpenCode, Cline and Continue.** `examples/` has one config per client, each starting plain
+`tool-guardian`. Each was run on Linux by the real client (Claude Code 2.1.296, OpenCode 1.18.35, Cline CLI 3.0.70,
+Continue `cn` 1.5.47) against a scripted model: router tools reached the model, a `list_capabilities` call went through
+to a stub server and back. `tests/clients/run_clients.py` repeats it with whatever clients are on PATH.
+
+**The Claude Code hook ran in a live session.** In deny mode it blocked a Bash call naming a router tool inside Claude
+Code 2.1.296. The payload Claude Code sent and the example from its hook docs are both test fixtures now
+(`tests/test_claude_code_hook.py`). `examples/claude-code/settings.json` matches `Bash|PowerShell`.
+
+**CI on three operating systems.** pytest and the node tests (`check`, `test:node`, the DSH smoke and probes) run on
+Ubuntu, Windows and macOS. No change to the router, the ladder or any runtime code.
+
 ## dsh-tool-guardian 0.5.0-beta.1 / PyPI tool-guardian 0.5.0 (2026-10-04)
 
 **Tool calls written as text are repaired (DSH engine).** Local models sometimes write a tool call into the reply text

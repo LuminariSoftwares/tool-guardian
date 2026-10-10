@@ -5,8 +5,9 @@
     python tests/clients/run_clients.py --only opencode --bin cline=/path/to/cline
 
 For each client it starts tests/clients/mock_model.py (a scripted model, no API key, no
-network), a stub MCP backend behind tool-guardian, and an isolated HOME, loads the example
-config *file* from examples/ unchanged (only a mock model provider is added beside it), asks
+network), a stub MCP backend behind tool-guardian, and an isolated HOME, hands the client the
+example's tool-guardian entry from examples/ unchanged (Claude Code through `claude mcp add-json`;
+OpenCode and Continue with the mock model provider added beside it; Cline the file as is), asks
 one question and checks three things:
 
   1. the client sent tool-guardian's router tools to the model;

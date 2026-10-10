@@ -2,7 +2,10 @@
 
 <p align="center"><b>Your MCP servers, for ~300 tokens instead of ~28,000 &mdash; and tool results that stop flooding the window.</b></p>
 
+<p align="center">Measured on DeepSeek Harness with qwen3-coder:30b, 8 tasks: sessions that ended on a tool call written as text instead of made<br><b>7/16 &rarr; 0/32</b> (16 sessions on 0.4.0-beta.2, 32 on 0.5.0-beta.1; the repair runs in the DSH bundle, see the <a href="CHANGELOG.md">CHANGELOG</a>).</p>
+
 <p align="center">
+  <a href="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml"><img alt="tests" src="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml/badge.svg?branch=main"></a>
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow.svg">
   <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-blue.svg">
   <img alt="Dependencies: none" src="https://img.shields.io/badge/python%20deps-none-2ea44f.svg">
@@ -11,6 +14,7 @@
 </p>
 
 <p align="center">
+  <a href="#works-with">Works with</a> &middot;
   <a href="#install-both-deepseek-harness-about-5-minutes">Install both</a> &middot;
   <a href="docs/first-5-minutes.md">First 5 minutes</a> &middot;
   <a href="#why-this-exists">Why</a> &middot;
@@ -33,6 +37,38 @@ Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-gua
 | A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
 | DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
 | A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
+
+## Works with
+
+`pip install tool-guardian`, then one entry in your client. Every example below starts the same command, `tool-guardian`,
+which reads `~/.tool-guardian/mcp.json`: `tool-guardian-setup import` fills it from the servers you already use.
+
+| Client | Example | Where it goes | Tested |
+|---|---|---|---|
+| **Claude Code** | [`project.mcp.json`](examples/claude-code/project.mcp.json), hook: [`settings.json`](examples/claude-code/settings.json) | `claude mcp add --scope user tool-guardian -- tool-guardian`, or copy to `.mcp.json` in a project (Claude Code asks once to approve a project server); the hook goes in `~/.claude/settings.json` or `.claude/settings.json` | 2.1.296: full turn; hook in a live session |
+| **OpenCode** | [`opencode.json`](examples/opencode/opencode.json) | `opencode.json` in the project, or `~/.config/opencode/opencode.json` | 1.18.35: full turn |
+| **Cline** | [`cline_mcp_settings.json`](examples/cline/cline_mcp_settings.json) | VS Code: Cline &rarr; MCP Servers &rarr; Configure MCP Servers; CLI: `~/.cline/data/settings/cline_mcp_settings.json` | CLI 3.0.70: full turn |
+| **Continue** | [`tool-guardian.yaml`](examples/continue/tool-guardian.yaml) | `.continue/mcpServers/` in the workspace (IDE), or its `mcpServers` entry in `config.yaml` | `cn` 1.5.47: full turn (entry in `config.yaml`) |
+
+**What "full turn" means.** On Linux, 2026-10-10, each client got the example's `tool-guardian` entry unchanged
+(Claude Code through `claude mcp add-json`; OpenCode and Continue with a test model provider added beside it; Cline the
+file as is) and talked to a scripted model ([`tests/clients/mock_model.py`](tests/clients/mock_model.py), no real model, no API key). The client
+sent tool-guardian's router tools to the model. The model's `list_capabilities` call went through tool-guardian to a stub
+MCP server, and the answer came back to the model. tool-guardian's call log recorded the client by name (`claude-code`,
+`opencode`, `@cline/core`, `continue-cli-client`). Re-run it: `pip install -e .` then `python tests/clients/run_clients.py`.
+This proves the wiring, not that *your* model will use the router: see [Model requirement](#model-requirement-read-this-before-you-switch).
+
+**The Claude Code hook in a live session.** The hook command from [`settings.json`](examples/claude-code/settings.json)
+with `--mode deny` added (wrapped to record its input) blocked a Bash call naming a router tool inside a running Claude
+Code 2.1.296 session. Claude Code
+showed the hook's reason, `Use call_tool(server="probe", tool="tg_live_probe_tool", args={...}) instead of the shell`, and
+the call log got its `bypass` row. The payload Claude Code sent is a test fixture now
+([`tests/test_claude_code_hook.py`](tests/test_claude_code_hook.py)), next to the example from Claude Code's hook docs.
+
+Not tested yet: the Cline VS Code extension (same file name and shape; tested through the Cline CLI), Continue's
+`.continue/mcpServers/` folder (read by the IDE extension; `cn` reads only `config.yaml`), and client runs on Windows or
+macOS (the unit tests run on all three in CI). On Windows, if a client cannot find `tool-guardian`, put the full path from
+`where tool-guardian` in the `command`.
 
 <!-- shared "install both" block: keep identical to the Context Guardian README -->
 ## Install both (DeepSeek Harness, about 5 minutes)
@@ -100,7 +136,7 @@ It is one repo and one Python router. Pick the front door that matches your harn
 
 | | **MCP server** (any MCP client) | **Native DSH bundle** |
 |---|---|---|
-| Works with | Claude Code, Claude Desktop, OpenClaude, Cursor, anything that speaks MCP over stdio | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) |
+| Works with | Claude Code, OpenCode, Cline, Continue ([tested configs](#works-with)), Claude Desktop, OpenClaude, Cursor, anything that speaks MCP over stdio | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) |
 | Install | `pip install tool-guardian` | `dsh plugin --profile <name> add dsh-tool-guardian` |
 | Hides MCP schemas behind 3 router tools | yes | yes, registered natively |
 | Output ladder on results | results of `call_tool` | **every** tool's result (`bash`, `grep`, `web_fetch`, ...) |
@@ -369,7 +405,7 @@ For real bypass detection in **Claude Code**, add its `PreToolUse` hook, which m
 { "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "tool-guardian --hook-pretooluse" } ] } ] } }
 ```
 
-`--mode deny` / `TOOL_GUARDIAN_HOOK_MODE=deny` blocks the call and tells Claude which `call_tool(...)` to use. The hook is built to Claude Code's documented `PreToolUse` input and output and tested against those payloads, not yet in a live Claude Code session. Other clients without a pre-tool hook get the two server-side signals only.
+`--mode deny` / `TOOL_GUARDIAN_HOOK_MODE=deny` blocks the call and tells Claude which `call_tool(...)` to use. The hook is tested against Claude Code's documented `PreToolUse` payload and against a payload captured from a live Claude Code 2.1.296 session, where deny mode blocked the call (see [Works with](#works-with)); [`examples/claude-code/settings.json`](examples/claude-code/settings.json) also matches `PowerShell`. Other clients without a pre-tool hook get the two server-side signals only.
 
 ## Compatibility
 
@@ -377,10 +413,10 @@ For real bypass detection in **Claude Code**, add its `PreToolUse` hook, which m
 |---|---|---|---|
 | DeepSeek Harness (bundle) | 0.1.2-alpha.2, Windows 11 | later 0.1.x | peer `@deepseek-ai/dsh-tools >=0.1.2-alpha.2`, `@deepseek-ai/cordis ^4.0.2`; `/toolguardian` needs DSH's command registry (present in 0.1.2-alpha.2) |
 | Node.js (bundle, `npm run setup`) | 22.x on Windows 11 and Linux | `^22.19.0` or `>=24` | the `engines` field |
-| Python (router, bridge, setup) | 3.11 on Windows 11 and Linux | 3.9 – 3.12 | standard library only; 3.9 / 3.10 are checked by syntax, not by a test run |
-| Operating system | Windows 11; Linux (test suite) | macOS | macOS is untested |
+| Python (router, bridge, setup) | 3.11 on Windows 11 and Linux; CI: 3.11 on Ubuntu, Windows, macOS and 3.9 on Ubuntu | 3.9 – 3.12 | standard library only; 3.10 and 3.12 are not run by CI |
+| Operating system | Windows 11 (daily use); Ubuntu, Windows, macOS (CI: pytest and the node tests) | | the client runs in [Works with](#works-with) were on Linux only |
 | MCP servers behind the router | stdio | stdio | HTTP/SSE (`"url"`) servers are reported `UNSUPPORTED` |
-| Clients (MCP server path) | OpenClaude | Claude Code, Claude Desktop, Cursor, any stdio MCP client | the Claude Code bypass hook is tested against its documented payloads only |
+| Clients (MCP server path) | Claude Code 2.1.296, OpenCode 1.18.35, Cline CLI 3.0.70, Continue `cn` 1.5.47 (one scripted-model turn each, Linux); OpenClaude | Claude Desktop, Cursor, the Cline and Continue IDE extensions, any stdio MCP client | see [Works with](#works-with); the Claude Code hook ran in a live session |
 | Models | `qwen3:30b-a3b-instruct-2507` under DSH drove the router (3 sessions) | any model that calls tools | gpt-oss:20b and qwen3-30b-a3b bypassed it under OpenClaude — see [Model requirement](#model-requirement-read-this-before-you-switch) |
 | Model backend | Ollama (via DSH / OpenClaude) | any | the router never talks to the model backend; only the model's tool-calling behaviour matters |
 | Companion | dsh-context-guardian 0.1.0-alpha.5 | | the two share no files and install separately |
@@ -406,7 +442,11 @@ For real bypass detection in **Claude Code**, add its `PreToolUse` hook, which m
 pip install -r requirements-dev.txt
 pytest                                  # includes the contract probes in tests/probes/
 pnpm install && node tests/dsh_smoke.mjs && node tests/probe_dsh_mvp.mjs && node tests/probe_setup.mjs
+npm run check && npm run test:node
+pip install -e . && python tests/clients/run_clients.py   # real clients on PATH vs examples/ (optional)
 ```
+
+CI runs pytest and the node tests on Ubuntu, Windows and macOS.
 
 ## Acknowledgements
 
