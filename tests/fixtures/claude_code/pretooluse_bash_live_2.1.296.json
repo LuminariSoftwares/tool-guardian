@@ -1,0 +1,17 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/root/.claude/projects/-home-user-tool-guardian/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/home/user/tool-guardian",
+  "scratchpad_dir": "/tmp/claude-0/-home-user-tool-guardian/00000000-0000-4000-8000-000000000001/scratchpad",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo tg_live_probe_tool"
+  },
+  "tool_use_id": "toolu_01LIVEPROBE000000000000"
+}

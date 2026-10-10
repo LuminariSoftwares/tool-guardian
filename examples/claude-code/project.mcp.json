@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tool-guardian": {
+      "command": "tool-guardian",
+      "args": []
+    }
+  }
+}
