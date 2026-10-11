@@ -14,5 +14,14 @@ if (typeof f === 'function') {
   check('ties_sorted_by_name', f({ zed: { spilled: 2, recalled: 0 }, abe: { spilled: 2, recalled: 1 } }) === 'recall after shortening: abe 1 of 2 (50%), zed 0 of 2 (0%)')
   check('bad_values_count_as_zero', f({ x: { spilled: 'nope' } }) === '' )
 }
+const L = plugin.ladderLine
+check('ladder_line_exported', typeof L === 'function')
+if (typeof L === 'function') {
+  check('ladder_line_counts_archive_failures',
+    L(true, { shaped: 3, spilled: 2, archive_failures: 1, original_chars: 900, final_chars: 300 })
+      === 'output ladder: on -- 3 results shaped, 2 archived, 1 archive failures, 900 -> 300 chars since load')
+  check('ladder_line_missing_counts_are_zero',
+    L(false, {}) === 'output ladder: off -- 0 results shaped, 0 archived, 0 archive failures, 0 -> 0 chars since load')
+}
 console.log(`probe_recall_line: ${total} checks, ${pass} passed, ${total - pass} failed`)
 process.exit(pass === total && total > 0 ? 0 : 1)

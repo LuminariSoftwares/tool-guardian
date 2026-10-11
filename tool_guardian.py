@@ -62,6 +62,7 @@ import collections
 import hashlib
 import json
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -95,20 +96,37 @@ tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are ca
 __version__ = "0.5.0"  # 2026-10-04 release; 2026-10-01: was still "0.3.0" in the 0.4.0 release (update check reported the wrong version)
 
 PROTOCOL = "2024-11-05"
-START_TIMEOUT = float(os.environ.get("TOOL_GUARDIAN_START_TIMEOUT", "90"))
-CALL_TIMEOUT = float(os.environ.get("TOOL_GUARDIAN_CALL_TIMEOUT", "120"))
-CHARS_PER_TOKEN = float(os.environ.get("TOOL_GUARDIAN_CHARS_PER_TOKEN", "3.5"))
-LOG_PATH = os.environ.get("TOOL_GUARDIAN_LOG", "")
-SKILLS_DIRS = os.environ.get("TOOL_GUARDIAN_SKILLS", "")   # os.pathsep-separated roots
 SKILL_FILE = "SKILL.md"
 _OFF = ("0", "false", "False", "off", "no")
-LADDER_ON = os.environ.get("TOOL_GUARDIAN_LADDER", "1") not in _OFF
-# The pre-0.3.0 result shape (the raw MCP envelope as indented JSON, cut at 20000).
-RAW_RESULTS = os.environ.get("TOOL_GUARDIAN_RAW_RESULTS", "0") not in _OFF
-# One JSON line per router call (and per bypass the DSH plugin reports). "" disables.
-CALL_LOG = os.environ.get("TOOL_GUARDIAN_CALL_LOG",
-                          str(Path.home() / ".tool-guardian" / "calls.jsonl"))
 LEGACY_CAP = 20000
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def read_tunables() -> None:
+    """The TOOL_GUARDIAN_* tunables, from the environment. Called at import and again in
+    main() after the .env is loaded -- a value set only in .env must still count."""
+    global START_TIMEOUT, CALL_TIMEOUT, CHARS_PER_TOKEN, LOG_PATH, SKILLS_DIRS
+    global LADDER_ON, RAW_RESULTS, CALL_LOG
+    START_TIMEOUT = _env_float("TOOL_GUARDIAN_START_TIMEOUT", 90.0)
+    CALL_TIMEOUT = _env_float("TOOL_GUARDIAN_CALL_TIMEOUT", 120.0)
+    CHARS_PER_TOKEN = _env_float("TOOL_GUARDIAN_CHARS_PER_TOKEN", 3.5)
+    LOG_PATH = os.environ.get("TOOL_GUARDIAN_LOG", "")
+    SKILLS_DIRS = os.environ.get("TOOL_GUARDIAN_SKILLS", "")   # os.pathsep-separated roots
+    LADDER_ON = os.environ.get("TOOL_GUARDIAN_LADDER", "1") not in _OFF
+    # The pre-0.3.0 result shape (the raw MCP envelope as indented JSON, cut at 20000).
+    RAW_RESULTS = os.environ.get("TOOL_GUARDIAN_RAW_RESULTS", "0") not in _OFF
+    # One JSON line per router call (and per bypass the DSH plugin reports). "" disables.
+    CALL_LOG = os.environ.get("TOOL_GUARDIAN_CALL_LOG",
+                              str(Path.home() / ".tool-guardian" / "calls.jsonl"))
+
+
+read_tunables()
 
 
 def log(msg: str) -> None:
@@ -528,28 +546,66 @@ class Backend:
         self.error = ""
         self._id = 100
         self._lock = threading.Lock()
+        self._lines = queue.Queue()
+        self._abandoned = False
 
     def _send(self, obj) -> None:
         self.proc.stdin.write(json.dumps(obj) + "\n")
         self.proc.stdin.flush()
 
+    def _read_stdout(self, proc, q) -> None:
+        """One reader thread per backend: every stdout line into the queue, then None at EOF.
+        _await waits on the queue with a timeout, so a backend that never writes cannot
+        block the router past START_TIMEOUT / CALL_TIMEOUT the way a bare readline() did."""
+        try:
+            for line in proc.stdout:
+                q.put(line)
+        except (OSError, ValueError):
+            pass
+        q.put(None)
+
     def _await(self, want_id: int, timeout: float):
         """Read until the reply with this id. Servers emit notifications and log
         lines on stdout, so anything else is skipped, not treated as the answer."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            line = self.proc.stdout.readline()
-            if not line:
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("no reply to id %d within %gs" % (want_id, timeout))
+            try:
+                line = self._lines.get(timeout=remaining)
+            except queue.Empty:
+                raise TimeoutError("no reply to id %d within %gs" % (want_id, timeout)) from None
+            if line is None:
+                self._lines.put(None)   # EOF stays visible to every later wait
                 raise RuntimeError("server closed stdout")
             try:
                 msg = json.loads(line)
             except ValueError:
                 continue
+            if not isinstance(msg, dict):
+                continue
             if msg.get("id") == want_id:
                 if "error" in msg:
                     raise RuntimeError(str(msg["error"])[:300])
                 return msg.get("result", {})
-        raise TimeoutError("no reply to id %d within %ss" % (want_id, timeout))
+
+    def stop(self) -> None:
+        """Kill the process. Best effort, never raises."""
+        proc = self.proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+    def fail_start(self, error: str) -> None:
+        """Router.start gave up on this backend: mark it failed and kill it, so a start
+        that finishes later cannot flip it back to ok."""
+        self._abandoned = True
+        self.status, self.error = "UNKNOWN", error
+        self.stop()
+        log("backend %s: %s -- %s" % (self.name, self.status, self.error))
 
     def _next(self) -> int:
         self._id += 1
@@ -579,22 +635,33 @@ class Backend:
         except Exception as exc:  # noqa: BLE001
             self.status, self.error = "UNKNOWN", "could not start: %s" % exc
             return
+        threading.Thread(target=self._read_stdout, args=(self.proc, self._lines),
+                         name="tg-read-" + self.name, daemon=True).start()
+        # One deadline for the whole handshake: START_TIMEOUT bounds start, not each reply.
+        deadline = time.monotonic() + START_TIMEOUT
         try:
             i = self._next()
             self._send({"jsonrpc": "2.0", "id": i, "method": "initialize",
                         "params": {"protocolVersion": PROTOCOL, "capabilities": {},
                                    "clientInfo": {"name": "tool-guardian",
                                                   "version": __version__}}})
-            self._await(i, START_TIMEOUT)
+            self._await(i, max(deadline - time.monotonic(), 0.001))
             self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             i = self._next()
             self._send({"jsonrpc": "2.0", "id": i, "method": "tools/list", "params": {}})
-            res = self._await(i, START_TIMEOUT)
+            res = self._await(i, max(deadline - time.monotonic(), 0.001))
+            if self._abandoned:
+                return
             self.tools = res.get("tools") or []
             self.status = "ok"
             log("backend %s: %d tools" % (self.name, len(self.tools)))
         except Exception as exc:  # noqa: BLE001
+            if self._abandoned:
+                return
             self.status, self.error = "UNKNOWN", "%s: %s" % (type(exc).__name__, exc)
+            if isinstance(exc, TimeoutError):
+                self.error += " (TOOL_GUARDIAN_START_TIMEOUT); backend stopped"
+                self.stop()
             log("backend %s: %s -- %s" % (self.name, self.status, self.error))
 
     def hint(self) -> str:
@@ -624,11 +691,19 @@ class Backend:
             raise RuntimeError(
                 "server %r has no tool %r. Available: %s"
                 % (self.name, tool, ", ".join(t.get("name", "?") for t in self.tools)))
-        with self._lock:
+        # One deadline covers waiting for the lock AND the reply: a call that timed out
+        # releases the lock, and a call queued behind it cannot wait longer than its own budget.
+        deadline = time.monotonic() + CALL_TIMEOUT
+        if not self._lock.acquire(timeout=CALL_TIMEOUT):
+            raise TimeoutError("server %r is still busy with an earlier call after %gs"
+                               % (self.name, CALL_TIMEOUT))
+        try:
             i = self._next()
             self._send({"jsonrpc": "2.0", "id": i, "method": "tools/call",
                         "params": {"name": tool, "arguments": args or {}}})
-            return self._await(i, CALL_TIMEOUT)
+            return self._await(i, max(deadline - time.monotonic(), 0.001))
+        finally:
+            self._lock.release()
 
 
 # --------------------------------------------------------------- config ------
@@ -644,7 +719,7 @@ class Router:
         self._last_meta = {}
         self.native_groups = False   # True under the DSH plugin, where activate_group exists
         self._spill = None
-        self.stats = {"calls": 0, "errors": 0, "shaped": 0, "spilled": 0,
+        self.stats = {"calls": 0, "errors": 0, "shaped": 0, "spilled": 0, "archive_failures": 0,
                       "original_chars": 0, "final_chars": 0,
                       "schema_rejects": 0, "schema_coercions": 0,
                       "loop_warnings": 0, "loop_blocks": 0,
@@ -675,9 +750,15 @@ class Router:
             self.backends[name] = b
             t = threading.Thread(target=b.start, name="tg-start-" + name, daemon=True)
             t.start()
-            threads.append(t)
-        for t in threads:
-            t.join()
+            threads.append((b, t))
+        # Backend.start honours START_TIMEOUT itself; this bound is the safety net for a
+        # start stuck anywhere else (a spawn or a pipe write that never returns).
+        deadline = time.monotonic() + START_TIMEOUT + 2.0
+        for b, t in threads:
+            t.join(max(deadline - time.monotonic(), 0))
+            if t.is_alive():
+                b.fail_start("TimeoutError: no handshake within %gs (TOOL_GUARDIAN_START_TIMEOUT); "
+                             "backend stopped" % START_TIMEOUT)
         self.remember_catalogue()
 
     def remember_catalogue(self) -> None:
@@ -725,7 +806,7 @@ class Router:
         out = []
         for name, b in sorted(self.backends.items()):
             if b.status != "ok":
-                out.append("[%s] %s: %s" % (name, b.status, b.error[:80]))
+                out.append("[%s] %s: %s" % (name, b.status, b.error[:160]))
                 continue
             out.append("[%s] %d tools: %s" % (name, len(b.tools),
                        ", ".join(t.get("name", "?") for t in b.tools)))
@@ -875,6 +956,7 @@ class Router:
                 if len(text) > LEGACY_CAP:
                     shaped += "\n[tool-guardian: cut at %d of %d chars; the archive could not be written (%s)]" % (LEGACY_CAP, len(text), exc)
                 meta.update(rule="archive_failed")
+                self.stats["archive_failures"] += 1
         if shaped != text:
             self.stats["shaped"] += 1
         meta["final_chars"] = len(shaped)
@@ -925,6 +1007,29 @@ class Router:
                            spill_id=meta.get("spill_id", "")))
         return text
 
+    def _resolve_server(self, tool: str):
+        """call_tool without `server`: (server, tool) from "server.tool", or from a bare tool
+        name that exactly one live server has. Otherwise the error text to return."""
+        hits = []
+        if "." in tool:
+            srv, bare = tool.split(".", 1)
+            b = self.backends.get(srv)
+            # A dead server is still the one named: its call fails loudly with UNKNOWN.
+            if b is not None and (b.status != "ok" or b.find(bare) is not None):
+                hits.append((srv, bare))
+        for srv, b in sorted(self.backends.items()):
+            if b.status == "ok" and b.find(tool) is not None and (srv, tool) not in hits:
+                hits.append((srv, tool))
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
+            return ("call_tool needs a server: tool %r is ambiguous, it exists as %s.\n\nNEXT STEP: "
+                    "use call_tool again with server set, or name the tool as server.tool."
+                    % (tool, ", ".join("%s.%s" % h for h in hits)))
+        return ("call_tool needs a server: no tool named %r on any server. Known servers: %s"
+                "\n\nNEXT STEP: search_capabilities(query) to find it, then call_tool with its server."
+                % (tool, ", ".join(sorted(self.backends)) or "none"))
+
     def _handle(self, name: str, args: dict) -> str:
         # Skills are handled on the RAW args, BEFORE _coerce. _coerce aliases
         # "name" -> "server" and POPS it (it exists so a model saying
@@ -957,6 +1062,12 @@ class Router:
             return (json.dumps(t, indent=2) + "\n\nNEXT STEP: use call_tool with server %s, tool %s, "
                     "args: %s." % (b.name, t.get("name"), compact_args(t.get("inputSchema"))))
         if name == "call_tool":
+            if not str(args.get("server") or "") and args.get("tool"):
+                found_at = self._resolve_server(str(args.get("tool")))
+                if isinstance(found_at, str):
+                    self._last_meta = {"is_error": True, "rule": "no_server"}
+                    return found_at
+                args["server"], args["tool"] = found_at
             b = self.backends.get(str(args.get("server") or ""))
             if not b:
                 return ("no server named %r. Known: %s\n\nNEXT STEP: list_capabilities()"
@@ -1003,7 +1114,14 @@ class Router:
                             "returned the same result %d times. Use the result you already "
                             "have, change the arguments, or tell the user what is blocking "
                             "you.]" % len(prior[-4:]))
-            res = b.call(tool, sent)
+            try:
+                res = b.call(tool, sent)
+            except TimeoutError as exc:
+                self._last_meta = {"is_error": True, "rule": "call_timeout"}
+                return ("[tool-guardian: %s.%s did not answer within %gs (TOOL_GUARDIAN_CALL_TIMEOUT): %s. "
+                        "The server may still be working on it; nothing came back.]\n\nNEXT STEP: try "
+                        "once more, or tell the user that %s is not responding."
+                        % (b.name, tool, CALL_TIMEOUT, exc, b.name))
             if RAW_RESULTS:
                 return json.dumps(res, indent=2)[:LEGACY_CAP]
             text, is_error = render_result(res)
@@ -1075,6 +1193,10 @@ class Router:
                     self.stats["recalls"][origin]["recalled"] += 1
             except Exception:  # a counter must never cost the caller its archive
                 pass
+            if not got.get("returned_lines") and not args.get("grep"):
+                return ("[%s: no lines at start_line %d; total_lines %d]\n\nNEXT STEP: use retrieve_spill "
+                        "again with a start_line from 1 to %d, or a grep regex."
+                        % (got["id"], got["start_line"], got["total_lines"], max(got["total_lines"], 1)))
             tail = ""
             if got.get("truncated"):
                 tail = ("\n\nNEXT STEP: more remains -- use retrieve_spill again with id %s and start_line %d, "
@@ -1271,6 +1393,8 @@ def selftest(config: str = "") -> int:
               "pays off exactly when tool bloat is actually a problem.")
     print("\n%d backend(s) up, %d tools reachable."
           % (len(ok), sum(len(b.tools) for b in ok)))
+    for b in sorted(ok, key=lambda x: x.name):
+        print("[%s] %d tools, ~%d tokens" % (b.name, len(b.tools), est_tokens(b.tools)))
     for b in bad:
         print("  %s: %s -- %s" % (b.name, b.status, b.error[:100]))
     print("\nNOTE: this measures the token SAVING and that backends start. It does"
@@ -1280,7 +1404,8 @@ def selftest(config: str = "") -> int:
           "\n'Model requirement' section. After a few real tasks,"
           "\n`tool-guardian --bypass-summary` shows whether it did.")
     print("\n" + update_line())
-    return 0 if ok else 1
+    # Every configured backend must be up: one dead server is a broken setup, not a pass.
+    return 0 if ok and not bad else 1
 
 
 def update_line() -> str:
@@ -1368,6 +1493,7 @@ def main(argv=None) -> int:
         if cfg:
             os.environ.setdefault("TOOL_GUARDIAN_CONFIG", cfg)
         tg_env.load_env_file()
+        read_tunables()
     if a.selftest:
         return selftest(a.config)
     r = Router(a.config)

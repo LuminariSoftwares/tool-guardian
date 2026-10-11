@@ -306,6 +306,17 @@ export function callChecksLine(routerStats = {}, native = {}) {
 }
 
 /**
+ * The /toolguardian output-ladder line: results shaped, archived, and archives that could
+ * not be written (each of those went back unshortened, so the saving silently shrank).
+ */
+export function ladderLine(enabled, stats = {}) {
+  const s = stats ?? {}
+  return `output ladder: ${enabled ? 'on' : 'off'} -- ${counter(s.shaped)} results shaped, `
+    + `${counter(s.spilled)} archived, ${counter(s.archive_failures)} archive failures, `
+    + `${counter(s.original_chars)} -> ${counter(s.final_chars)} chars since load`
+}
+
+/**
  * The /toolguardian recall line: per tool, how many of the results the output ladder
  * shortened and archived the model then read back with retrieve_spill. A tool high on
  * this list is being shortened too hard -- the model keeps paying to undo the saving.
@@ -1049,7 +1060,7 @@ export function apply(ctx, config) {
     if (pending.length > 0) lines.push(`last session used: ${pending.join(', ')} -- /toolguardian restore (or the model's restore_groups) loads them`)
     try {
       const stats = await live.request('stats', {}, 10000)
-      lines.push(`output ladder: ${options.ladder.enabled ? 'on' : 'off'} -- ${stats.shaped ?? 0} results shaped, ${stats.spilled ?? 0} archived, ${stats.original_chars ?? 0} -> ${stats.final_chars ?? 0} chars since load`)
+      lines.push(ladderLine(options.ladder.enabled, stats))
       lines.push(callChecksLine(stats, loopGuard.stats))
       const r = recallLine(stats.recalls)
       if (r !== '') lines.push(r)

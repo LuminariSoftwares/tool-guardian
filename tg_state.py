@@ -27,8 +27,15 @@ from pathlib import Path
 STATE_VERSION = 1
 DEFAULT_SHELL_TOOLS = ("Bash", "PowerShell")
 
-DISCOVERY_TOOLS = ("list_capabilities", "describe_tool")
-#: probes of the call log that only *look* tools up instead of calling them
+#: router tools that only *look* things up; only ``call_tool`` invokes one
+DISCOVERY_TOOLS = ("list_capabilities", "describe_tool", "search_capabilities",
+                   "list_skills", "read_skill", "retrieve_spill")
+
+
+def _is_discovery(tool):
+    """True for a look-up router tool, ``list_groups*`` included."""
+    return tool in DISCOVERY_TOOLS or tool.startswith("list_groups")
+
 EMPTY_STATE = {"version": STATE_VERSION, "sessions": []}
 
 
@@ -278,13 +285,14 @@ def summarize(rows, session=None, since=None):
             router_calls += 1
             if row.get("ok") is False:
                 router_errors += 1
-            if tool in DISCOVERY_TOOLS:
+            if _is_discovery(tool):
                 discovery_calls += 1
             if tool == "call_tool":
                 call_tool_calls += 1
             if sid:
-                counts = per_session.setdefault(sid, [0, 0])
-                counts[0 if tool in DISCOVERY_TOOLS else 1] += 1
+                # [discovery, invoked, other]: any router row keeps a session from being silent
+                counts = per_session.setdefault(sid, [0, 0, 0])
+                counts[0 if _is_discovery(tool) else 1 if tool == "call_tool" else 2] += 1
         elif kind == "bypass":
             bypasses += 1
             key = (_text(row.get("server")), _text(row.get("target")))
@@ -304,9 +312,10 @@ def summarize(rows, session=None, since=None):
 
     silent_sessions = sorted(
         sid for sid in started
-        if sum(per_session.get(sid, (0, 0))) == 0
+        if sum(per_session.get(sid, (0, 0, 0))) == 0
     )
-    stalled = sorted(sid for sid, (discovery, invoked) in per_session.items() if discovery > 0 and invoked == 0)
+    stalled = sorted(sid for sid, (discovery, invoked, _other) in per_session.items()
+                     if discovery > 0 and invoked == 0)
 
     return {
         "scope": scope,
