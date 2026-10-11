@@ -1,11 +1,11 @@
 {
  "calls": [
   {
-   "name": "mcp__luminari-scripts__service_status",
+   "name": "mcp__ops-scripts__service_status",
    "args": {
-    "service": "n8n"
+    "service": "web"
    }
   }
  ],
- "rest_starts_with": "I'll check if the studio's n8n service is up and find its UR"
+ "rest_starts_with": "I'll check if the project's web service is up and find its U"
 }

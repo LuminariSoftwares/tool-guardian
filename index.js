@@ -136,7 +136,7 @@ export const Config = Schema.object({
   spillKeep: Schema.natural().default(500),
   textToolCallRepair: Schema.object({
     enabled: Schema.boolean().default(true)
-      .description('Turn a tool call the model wrote as TEXT (<function=NAME>...) into a real tool call (P45 C-Repair).'),
+      .description('Turn a tool call the model wrote as TEXT (<function=NAME>...) into a real tool call.'),
     logOnly: Schema.boolean().default(false)
       .description('Only log the text calls it would repair; change nothing.'),
   }).default({}),
@@ -206,7 +206,7 @@ export function resolveOptions(section, env = process.env) {
 // context window fills. Same thresholds and the same two strings as tool_guardian.py's
 // call_tool guard, so a refusal reads identically on either side of the bridge.
 
-/** C-Repair log line, beside the Python router's call log. Never throws. */
+/** Text-call repair log line, beside the Python router's call log. Never throws. */
 function logTextCall(entry, env = process.env) {
   try {
     const path = env.TOOL_GUARDIAN_CALL_LOG ?? join(homedir(), '.tool-guardian', 'calls.jsonl')
@@ -303,6 +303,17 @@ export function callChecksLine(routerStats = {}, native = {}) {
     + `${counter(r.schema_coercions)} fixed silently, `
     + `${counter(r.loop_warnings) + counter(n.warnings)} repeat warnings, `
     + `${counter(r.loop_blocks) + counter(n.blocks)} repeats refused`
+}
+
+/**
+ * The /toolguardian output-ladder line: results shaped, archived, and archives that could
+ * not be written (each of those went back unshortened, so the saving silently shrank).
+ */
+export function ladderLine(enabled, stats = {}) {
+  const s = stats ?? {}
+  return `output ladder: ${enabled ? 'on' : 'off'} -- ${counter(s.shaped)} results shaped, `
+    + `${counter(s.spilled)} archived, ${counter(s.archive_failures)} archive failures, `
+    + `${counter(s.original_chars)} -> ${counter(s.final_chars)} chars since load`
 }
 
 /**
@@ -977,7 +988,7 @@ export function apply(ctx, config) {
     masks.delete(agent)
   })
 
-  // ── C-Repair (P45 B2, 2026-10-03): a tool call the model wrote as TEXT becomes a real tool call ──
+  // ── Text-call repair (2026-10-03): a tool call the model wrote as TEXT becomes a real tool call ──
   // qwen3-coder ended 7 of 16 tg2 sessions on a text call the harness never ran. Fails open: any
   // setup error leaves the provider stream untouched. One call-log line per call (the Python router's
   // TOOL_GUARDIAN_CALL_LOG, default ~/.tool-guardian/calls.jsonl; "" disables).
@@ -1049,7 +1060,7 @@ export function apply(ctx, config) {
     if (pending.length > 0) lines.push(`last session used: ${pending.join(', ')} -- /toolguardian restore (or the model's restore_groups) loads them`)
     try {
       const stats = await live.request('stats', {}, 10000)
-      lines.push(`output ladder: ${options.ladder.enabled ? 'on' : 'off'} -- ${stats.shaped ?? 0} results shaped, ${stats.spilled ?? 0} archived, ${stats.original_chars ?? 0} -> ${stats.final_chars ?? 0} chars since load`)
+      lines.push(ladderLine(options.ladder.enabled, stats))
       lines.push(callChecksLine(stats, loopGuard.stats))
       const r = recallLine(stats.recalls)
       if (r !== '') lines.push(r)

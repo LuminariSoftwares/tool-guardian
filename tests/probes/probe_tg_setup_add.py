@@ -1,6 +1,4 @@
-# @studio: QA | Overseer probe for tool-guardian-setup add/remove/list -- written from the CONTRACT, not from the module
-# @kind: cli
-# @called_by: human | ox acceptance (tg-setup-add-v1)
+# Contract probe for tool-guardian-setup add/remove/list -- written from the CONTRACT, not from the module
 """py probe_tg_setup_add.py [dir-holding-tg_setup.py]   -> last line: probe_tg_setup_add: N checks, N passed, M failed
 
 Every check runs tg_setup.py as a subprocess in a throwaway HOME/cwd with TOOL_GUARDIAN_CONFIG pointed

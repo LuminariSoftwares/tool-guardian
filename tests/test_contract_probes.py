@@ -1,4 +1,4 @@
-"""Run the overseer-written CONTRACT probes (tests/probes/) against the modules beside
+"""Run the CONTRACT probes (tests/probes/) against the modules beside
 tool_guardian.py. The probes were written from each module's contract before the module
 existed, so they assert what the author could not make true by writing a weak selftest."""
 import re

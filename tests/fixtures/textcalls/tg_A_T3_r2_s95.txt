@@ -1,8 +1,8 @@
-I need to find which NocoDB table studio records of kind "coding_lesson" go into and which fields are required. I'll use the `mcp__luminari-scripts__table_for` tool to get this information.
+I need to find which notes database table records of kind "task_note" go into and which fields are required. I'll use the `mcp__ops-scripts__table_for` tool to get this information.
 
-<function=mcp__luminari-scripts__table_for>
+<function=mcp__ops-scripts__table_for>
 <parameter=kind>
-coding_lesson
+task_note
 </parameter>
 </function>
 </tool_call>

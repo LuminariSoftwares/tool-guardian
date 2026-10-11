@@ -1,6 +1,4 @@
-# @studio: QA | Overseer probe for tool-guardian's tg_state.py -- written from the CONTRACT, not from the module
-# @kind: cli
-# @called_by: human | tests/test_contract_probes.py
+# Contract probe for tool-guardian's tg_state.py -- written from the CONTRACT, not from the module
 """py probe_tg_state.py [dir-holding-tg_state.py]   -> last line: probe_tg_state: N checks, N passed, M failed"""
 import json
 import os
@@ -177,8 +175,8 @@ def c_hook_check_matches_whole_names_only():
     short = S.hook_check({"tool_name": "Bash", "tool_input": {"command": "run it"}}, CAT)
     inside = S.hook_check({"tool_name": "Bash", "tool_input": {"command": "xn8n_list_workflowsx"}}, CAT)
     other = S.hook_check({"tool_name": "Read", "tool_input": {"file_path": "n8n_list_workflows"}}, CAT)
-    rule = S.hook_check({"tool_name": "Bash", "tool_input": {"command": "curl localhost:5679/api"}}, CAT,
-                        rules=[{"pattern": "localhost:5679", "server": "n8n", "tool": "n8n_list_workflows"}])
+    rule = S.hook_check({"tool_name": "Bash", "tool_input": {"command": "curl localhost:8080/api"}}, CAT,
+                        rules=[{"pattern": "localhost:8080", "server": "n8n", "tool": "n8n_list_workflows"}])
     return (hit == {"server": "n8n", "tool": "n8n_list_workflows"} and short is None and inside is None
             and other is None and rule == {"server": "n8n", "tool": "n8n_list_workflows"})
 

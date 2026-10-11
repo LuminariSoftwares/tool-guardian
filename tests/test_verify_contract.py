@@ -1,6 +1,6 @@
-"""Contract probe for the 0.4 router verification layer (P36 T1-T3).
+"""Contract probe for the 0.4 router verification layer.
 
-Written by the overseer FROM THE CONTRACT, before the code existed, and seen red
+Written FROM THE CONTRACT, before the code existed, and seen red
 first. It is the proof for three features, not a unit test of their internals:
 
   T1  search_capabilities(query, server?, limit?) -- keyword discovery, one line per tool

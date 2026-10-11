@@ -1,4 +1,4 @@
-"""Overseer's contract probe for bench_tokens.py (P36 B1, tool-guardian). Written before the module.
+"""Contract probe for bench_tokens.py (tool-guardian). Written before the module.
 usage: python probe_bench_tokens.py <dir holding bench_tokens.py>   -> prints `probe_bench_tokens: N checks, ...`"""
 import importlib.util, json, os, subprocess, sys, tempfile
 

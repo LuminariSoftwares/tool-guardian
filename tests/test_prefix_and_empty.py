@@ -1,4 +1,4 @@
-"""2026-10-03 (P45 B4 finding): the catalogue prints tools as `server.tool` and models copy that
+"""2026-10-03 (bench finding): the catalogue prints tools as `server.tool` and models copy that
 name into call_tool/describe_tool -- 18 ROUTER ERRORs in 25 bench sessions. And an EMPTY search
 result was followed by "NEXT STEP: answer the user from this result", so a stale index became a
 confident "it does not exist" (codebase-memory route 0 passes; graph_defines route 5/5)."""

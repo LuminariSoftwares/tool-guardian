@@ -1,6 +1,6 @@
-I need to find the coding lesson with ID 588 from the studio's records. Let me use the lessons_search tool to locate this specific lesson.
+I need to find the task note with ID 588 from the project's records. Let me use the notes_search tool to locate this specific note.
 
-<function=mcp__luminari-scripts__lessons_search>
+<function=mcp__ops-scripts__notes_search>
 <parameter=id>
 588
 </parameter>

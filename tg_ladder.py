@@ -1,6 +1,5 @@
-# @studio: Guardian | tool-guardian output ladder -- deterministic compression of tool results by type
-# @kind: library
-# @called_by: tool_guardian.Router.handle | modules/tg_bridge.py op_ladder
+# tool-guardian output ladder -- deterministic compression of tool results by type
+# Called by: tool_guardian.Router.handle | modules/tg_bridge.py op_ladder
 """py tg_ladder.py --in IN.json --out OUT.json      (IN: {"text","tool","is_error","cfg"})
 py tg_ladder.py --selftest
 
@@ -25,7 +24,7 @@ CONTRACT
       sampled     >= shell_min_chars, any other tool: the same algorithm
       clean/pass  cleaning changed it / nothing to do
 
-History: written from the P19 contract after one local-model attempt and two ox attempts
+History: written from a contract after one local-model attempt and two more automated attempts
 (2026-09-19) each landed 10-11 of the 15 contract-probe checks; the cleaning loop and the
 JSON-array shape follow those attempts. MIT licensed.
 """

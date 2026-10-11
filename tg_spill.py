@@ -1,6 +1,5 @@
-# @studio: Guardian | tool-guardian spill store -- archive of full tool results behind every lossy replacement
-# @kind: library
-# @called_by: tool_guardian.Router.shape + retrieve_spill | modules/tg_bridge.py op_ladder
+# tool-guardian spill store -- archive of full tool results behind every lossy replacement
+# Called by: tool_guardian.Router.shape + retrieve_spill | modules/tg_bridge.py op_ladder
 """py tg_spill.py --get ID [--start N] [--max N] [--grep REGEX] [--root DIR]
 py tg_spill.py --selftest
 
@@ -60,8 +59,10 @@ class SpillStore:
     def save(self, text: str, tool: str = "", rule: str = "") -> dict:
         # id = "sp_" + first 12 hex chars of sha256(text.encode("utf-8"))
         # writes <root>/<id>.txt (the text, UTF-8, newline="" so bytes are preserved) and
-        # <root>/<id>.json (sidecar: {"id","tool","rule","chars"}), each via a temp name + os.replace.
-        # IDEMPOTENT: if <id>.txt already exists, write nothing and return the same dict.
+        # <root>/<id>.json (sidecar: {"id","tool","rule","chars"}), each via a temp name + os.replace,
+        # the sidecar first and the .txt last.
+        # IDEMPOTENT: if <id>.txt already exists, write nothing (except a missing or invalid
+        # sidecar, which is rebuilt) and return the same dict.
         # returns {"id": id, "chars": len(text), "path": str(path of the .txt)}
         # After a save that wrote a NEW file, call self.prune().
 
@@ -73,48 +74,47 @@ class SpillStore:
         txt_path = self.root / f"{spill_id}.txt"
         json_path = self.root / f"{spill_id}.json"
         
-        # Check if files already exist
+        data = {
+            "id": spill_id,
+            "tool": tool,
+            "rule": rule,
+            "chars": len(text)
+        }
+
         if txt_path.exists():
-            # File already exists, read the JSON to return the same dict
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return {"id": spill_id, "chars": data["chars"], "path": str(txt_path)}
+            # Already archived. The text is what matters; a sidecar that is missing or
+            # unreadable (a crash between the two writes, a hand edit) is rebuilt, never fatal.
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    old = json.load(f)
+                return {"id": spill_id, "chars": int(old["chars"]), "path": str(txt_path)}
+            except (OSError, ValueError, KeyError, TypeError):
+                self._write_atomic(json_path, json.dumps(data, indent=2), newline=None)
+                return {"id": spill_id, "chars": len(text), "path": str(txt_path)}
 
-        # Create temporary files for atomic write
-        txt_temp = txt_path.with_suffix(".txt.tmp")
-        json_temp = json_path.with_suffix(".json.tmp")
+        # The sidecar first and the text LAST: the .txt is what marks a spill as saved, so a
+        # crash in between leaves no .txt and the next save simply writes both again.
+        self._write_atomic(json_path, json.dumps(data, indent=2), newline=None)
+        self._write_atomic(txt_path, text, newline='')
 
+        # Prune old files if needed
+        self.prune()
+
+        return {"id": spill_id, "chars": len(text), "path": str(txt_path)}
+
+    @staticmethod
+    def _write_atomic(path: pathlib.Path, content: str, newline) -> None:
+        """Write via a temp name + os.replace; the temp file is removed on failure."""
+        tmp = path.with_name(path.name + ".tmp")
         try:
-            # Write text file
-            with open(txt_temp, 'w', encoding='utf-8', newline='') as f:
-                f.write(text)
-            
-            # Write JSON sidecar
-            data = {
-                "id": spill_id,
-                "tool": tool,
-                "rule": rule,
-                "chars": len(text)
-            }
-            with open(json_temp, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
-            
-            # Atomic swap
-            os.replace(txt_temp, txt_path)
-            os.replace(json_temp, json_path)
-            
-            # Prune old files if needed
-            self.prune()
-            
-            return {"id": spill_id, "chars": len(text), "path": str(txt_path)}
-        
+            with open(tmp, 'w', encoding='utf-8', newline=newline) as f:
+                f.write(content)
+            os.replace(tmp, path)
         except Exception:
-            # Clean up temp files if something went wrong
-            for leftover in (txt_temp, json_temp):
-                try:
-                    os.remove(leftover)
-                except OSError:
-                    pass
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
             raise
 
     def get(self, spill_id: str, start_line: int = 1, max_lines: int = 400, grep: str = "") -> dict:
@@ -208,8 +208,14 @@ class SpillStore:
         if len(txt_files) <= self.keep:
             return 0
         
-        # Sort by modification time (oldest first)
-        txt_files.sort(key=lambda x: x.stat().st_mtime)
+        # Sort by modification time (oldest first). A file deleted since the glob (another
+        # router pruning the same directory) sorts first and its unlink below is skipped.
+        def mtime(path):
+            try:
+                return path.stat().st_mtime
+            except OSError:
+                return 0.0
+        txt_files.sort(key=mtime)
         
         # Remove oldest ones
         to_remove = txt_files[:-self.keep]  # Keep the latest `keep` files

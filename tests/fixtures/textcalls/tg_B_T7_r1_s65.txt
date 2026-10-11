@@ -1,8 +1,8 @@
-I need to check if the studio's n8n service is up and find its URL using the studio's MCP tools.
+I need to check if the project's web service is up and find its URL using the project's MCP tools.
 
 <function=list_capabilities>
 <parameter=server>
-luminari-scripts
+ops-scripts
 </parameter>
 </function>
 </tool_call>

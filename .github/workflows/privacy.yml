@@ -1,0 +1,96 @@
+name: privacy
+
+# Fails when a tracked file holds something that must not be public: a tailnet address or
+# name, a personal Windows path, an API key, or an e-mail address other than the allowed ones.
+# CI logs are public, so a finding prints only file:line and the pattern NUMBER -- never the
+# matched text, never the pattern. Extra patterns (one regex per line) come from the
+# PRIVACY_EXTRA_PATTERNS secret and are numbered after the built-in ones.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan tracked files
+        env:
+          PRIVACY_EXTRA_PATTERNS: ${{ secrets.PRIVACY_EXTRA_PATTERNS }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+
+          SELF = ".github/workflows/privacy.yml"
+          TAILNET = re.compile(r"(?<![\d.])100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.(\d{1,3})\.(\d{1,3})(?![\d])")
+          EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})")
+          ALLOWED_EMAILS = {"luminarientertainment@gmail.com"}
+
+
+          def tailnet(line):
+              for m in TAILNET.finditer(line):
+                  second, third, fourth = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                  if third > 255 or fourth > 255:
+                      continue
+                  if second == 64 and third == 0 and 1 <= fourth <= 20:
+                      continue   # 100.64.0.1-100.64.0.20: documentation range
+                  return True
+              return False
+
+
+          def email(line):
+              for m in EMAIL.finditer(line):
+                  addr, domain = m.group(0).lower(), m.group(1).lower()
+                  if addr in ALLOWED_EMAILS or domain == "users.noreply.github.com":
+                      continue
+                  if domain == "example.com" or domain.endswith(".example.com"):
+                      continue
+                  return True
+              return False
+
+
+          def regex(pattern, flags=0):
+              rx = re.compile(pattern, flags)
+              return lambda line: rx.search(line) is not None
+
+
+          CHECKS = [
+              tailnet,                                                            # 1 tailnet IP
+              regex(r"\.ts\.net\b", re.I),                                        # 2 tailnet name
+              regex(r"\bc:(?:\\+|/+)users(?:\\+|/+)", re.I),                      # 3 Windows home
+              regex(r"\b[A-Za-z]:\\+AI"),                                         # 4 drive path
+              regex(r"(?<![A-Za-z0-9_-])(?:sk-or-|sk-|tvly-|nvapi-|gsk_|ghp_|github_pat_|AIza)"
+                    r"[A-Za-z0-9_-]{16,}"),                                       # 5 API key
+              email,                                                              # 6 e-mail
+          ]
+
+          extra = [p.strip() for p in os.environ.get("PRIVACY_EXTRA_PATTERNS", "").splitlines()]
+          for i, p in enumerate((p for p in extra if p), start=len(CHECKS) + 1):
+              try:
+                  CHECKS.append(regex(p))
+              except re.error:
+                  print("pattern %d (extra) is not a valid regex" % i)
+                  sys.exit(2)
+
+          files = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True).stdout
+          findings = 0
+          for name in sorted(f.decode("utf-8", "replace") for f in files.split(b"\0") if f):
+              if name == SELF or not os.path.isfile(name):
+                  continue
+              with open(name, "rb") as fh:
+                  data = fh.read()
+              if b"\0" in data:
+                  continue   # binary
+              for no, line in enumerate(data.decode("utf-8", "replace").splitlines(), start=1):
+                  for n, check in enumerate(CHECKS, start=1):
+                      if check(line):
+                          print("%s:%d: pattern %d" % (name, no, n))
+                          findings += 1
+          print("privacy scan: %d finding(s), %d pattern(s), %d file(s)"
+                % (findings, len(CHECKS), len([f for f in files.split(b"\0") if f])))
+          sys.exit(1 if findings else 0)
+          PY

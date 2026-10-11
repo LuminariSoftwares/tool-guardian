@@ -1,5 +1,5 @@
-I'll use the MCP tool to find how many Fiverr gig production presets the studio has.
+I'll use the MCP tool to find how many task templates the project has.
 
-<function=mcp__luminari-scripts__list_gigs>
+<function=mcp__ops-scripts__list_templates>
 </function>
 </tool_call>

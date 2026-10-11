@@ -56,9 +56,9 @@ check('env_beats_section', plugin.resolveOptions({ ...base, configPath: 'a.json'
 check('direct_tool_name_is_a_legal_function_name', /^[A-Za-z0-9_-]{1,64}$/.test(plugin.directToolName('my.server', 'x'.repeat(80))))
 check('flatten_text_refuses_non_text_blocks', plugin.flattenText([{ type: 'text', text: 'a' }, { type: 'image' }]) === undefined
   && plugin.flattenText([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }]) === 'a\nb')
-const matcher = plugin.buildBypassMatcher({ rules: [{ pattern: 'localhost:5679', server: 'n8n', tool: 'n8n_list_workflows' }, { pattern: '([', server: 'x', tool: 'y' }], minNameLength: 8 },
+const matcher = plugin.buildBypassMatcher({ rules: [{ pattern: 'localhost:8080', server: 'n8n', tool: 'n8n_list_workflows' }, { pattern: '([', server: 'x', tool: 'y' }], minNameLength: 8 },
   [{ tools: ['stub.echo', 'stub.stub_render_video'] }])
-check('bypass_matcher', matcher('curl http://localhost:5679/api')?.tool === 'n8n_list_workflows'
+check('bypass_matcher', matcher('curl http://localhost:8080/api')?.tool === 'n8n_list_workflows'
   && matcher('python run.py stub_render_video --x')?.server === 'stub'
   && matcher('echo hello') === undefined && matcher('xstub_render_videox') === undefined && matcher(undefined) === undefined)
 
@@ -133,7 +133,7 @@ const spillId = /sp_[0-9a-f]{12}/.exec(shapedText)?.[0]
 check('big_bash_result_is_shaped_and_archived', shaped.out.kind === 'accept' && shapedText.length < 9000 && shapedText.includes('[tool-guardian: showing') && shapedText.includes('[exit code: 0]') && spillId !== undefined)
 const back = await registered.get('retrieve_spill').execute({ id: spillId, grep: 'line 01500 ' })
 check('archived_original_is_recoverable', back.includes('L1500: line 01500 output text') && existsSync(join(tmp, 'spill', `${spillId}.txt`)))
-const harnessNotice = '(Omitted 4824 bytes. Full formatted result stored at: F:\\AI\\.tmp\\dsh-spill-X\\session-1\\abc-pwsh.txt. Use read with offset/limit, or grep this path to search within it.)'
+const harnessNotice = '(Omitted 4824 bytes. Full formatted result stored at: C:\\Temp\\dsh-spill-X\\session-1\\abc-pwsh.txt. Use read with offset/limit, or grep this path to search within it.)'
 const spilled = await run('pwsh', `${big}\n\n${harnessNotice}`)
 const spilledText = spilled.out.content?.[0]?.text ?? ''
 check('harness_spilled_preview_is_shaped_and_keeps_the_harness_locator', spilledText.length < 9000 && spilledText.trimEnd().endsWith(harnessNotice) && !spilledText.includes('[tool-guardian: showing') && spilledText.includes('lines omitted'))

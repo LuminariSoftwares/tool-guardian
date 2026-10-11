@@ -1,4 +1,4 @@
-// P45 B1 (C-Parse) smoke, written BEFORE the module (2026-10-03). Fixtures are the real text tool calls qwen3-coder
+// Text tool-call parser smoke, written BEFORE the module (2026-10-03). Fixtures are the real text tool calls qwen3-coder
 // emitted in the tg / tg2 benches (extracted by script from the session logs, never retyped).
 //   node tests/text_toolcalls_smoke.mjs [path/to/text_toolcalls.js]
 import fs from "node:fs";
@@ -16,10 +16,10 @@ const SCHEMAS = {
   list_capabilities: S({ server: { type: "string" } }),
   call_tool: S({ server: { type: "string" }, tool: { type: "string" }, args: { description: "object or JSON string" } }),
   "mcp__codebase-memory__search_graph": S({ project: { type: "string" }, query: { type: "string" } }),
-  "mcp__luminari-scripts__table_for": S({ kind: { type: "string" } }),
-  "mcp__luminari-scripts__lessons_search": S({ query: { type: "string" }, id: { type: "integer" } }),
-  "mcp__luminari-scripts__list_gigs": S({}),
-  "mcp__luminari-scripts__service_status": S({ service: { type: "string" } }),
+  "mcp__ops-scripts__table_for": S({ kind: { type: "string" } }),
+  "mcp__ops-scripts__notes_search": S({ query: { type: "string" }, id: { type: "integer" } }),
+  "mcp__ops-scripts__list_templates": S({}),
+  "mcp__ops-scripts__service_status": S({ service: { type: "string" } }),
   demo: S({ n: { type: "number" }, flag: { type: "boolean" }, obj: { type: "object" }, s: { type: "string" } }),
 };
 const NAMES = Object.keys(SCHEMAS);
