@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+**Fixes from the 2026-10-10 review**, each with a test that failed before it (`tests/test_review_1010.py`,
+`tests/probe_recall_line.mjs`):
+
+- `TOOL_GUARDIAN_START_TIMEOUT` and `TOOL_GUARDIAN_CALL_TIMEOUT` are enforced. A backend that never answers is
+  stopped and reported `UNKNOWN` at the start timeout instead of holding start open; a call that times out returns a
+  tool error and frees the backend for the next call.
+- `--bypass-summary`: only `call_tool` counts as invoking a tool, so a session that only searched is reported as
+  stalled; `search_capabilities`, `list_groups*`, `list_skills`/`read_skill` and `retrieve_spill` count as discovery.
+- Spill archive: the sidecar is written before the text, a missing or unreadable sidecar is rebuilt instead of
+  failing every later save, and pruning survives a file deleted under it.
+- Archive failures are counted (`archive_failures`) and shown on the `/toolguardian` output-ladder line.
+- `call_tool` without `server` accepts `server.tool` or a tool name only one server has; an ambiguous name gets an
+  error listing the candidates.
+- `retrieve_spill` past the end says `no lines at start_line N; total_lines M`.
+- `TOOL_GUARDIAN_*` settings in `.env` are honoured.
+- `--selftest` prints `[server] N tools, ~M tokens` per server and exits non-zero when any backend failed; the
+  catalogue shows 160 characters of a backend error instead of 80.
+
+**Privacy CI.** `.github/workflows/privacy.yml` fails a push or pull request when a tracked file holds a tailnet
+address or name, a personal Windows path, an API key or an unexpected e-mail address; its log names only file, line
+and pattern number.
+
 **Works with Claude Code, OpenCode, Cline and Continue.** `examples/` has one config per client, each starting plain
 `tool-guardian`. Each was run on Linux by the real client (Claude Code 2.1.296, OpenCode 1.18.35, Cline CLI 3.0.70,
 Continue `cn` 1.5.47) against a scripted model: router tools reached the model, a `list_capabilities` call went through

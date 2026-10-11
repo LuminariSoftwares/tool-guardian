@@ -8,6 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml"><img alt="tests" src="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/privacy.yml"><img alt="privacy" src="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/privacy.yml/badge.svg?branch=main"></a>
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow.svg">
   <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-blue.svg">
   <img alt="Dependencies: none" src="https://img.shields.io/badge/python%20deps-none-2ea44f.svg">
