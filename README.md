@@ -2,6 +2,8 @@
 
 <p align="center"><b>Your MCP servers, for ~300 tokens instead of ~28,000 &mdash; and tool results that stop flooding the window.</b></p>
 
+<p align="center">For local models served by Ollama, LM Studio, vLLM or llama.cpp: the router never talks to the model backend, so any of them works when your client's model calls tools.</p>
+
 <p align="center">Measured on DeepSeek Harness with qwen3-coder:30b, 8 tasks: sessions that ended on a tool call written as text instead of made<br><b>7/16 &rarr; 0/32</b> (16 sessions on 0.4.0-beta.2, 32 on 0.5.0-beta.1; the repair runs in the DSH bundle, see the <a href="CHANGELOG.md">CHANGELOG</a>).</p>
 
 <p align="center">
@@ -124,9 +126,9 @@ Same idea as a search index: cheap catalogue always visible, detail on demand.
 
 The whole design rests on one behaviour: the model must **proactively call `list_capabilities` (then `call_tool`) when it needs a tool.** Capable/frontier models do this reliably. Small local models are less certain — and, as the two measurements below show, **the harness the model runs in matters as much as the model.**
 
-**Measurement 1 — August 2026, OpenClaude, router mounted over MCP.** Against a real studio stack, **gpt-oss:20b and qwen3-30b-a3b both bypassed the router** on ordinary tasks — even with the `NEXT STEP` nudge in every result *and* a dedicated router sub-agent priming them. They treated a tool name as a shell command or scripted their way around it. Part of that was the harness, not the models: gpt-oss:20b did call `list_capabilities` correctly but could not carry the discovery into `call_tool` inside a general task, and the one approach that completed the sequence (the sub-agent) was blocked by the harness's own agent-tool argument validation before it ever reached the router.
+**Measurement 1 — August 2026, OpenClaude, router mounted over MCP.** Against a real multi-server stack, **gpt-oss:20b and qwen3-30b-a3b both bypassed the router** on ordinary tasks — even with the `NEXT STEP` nudge in every result *and* a dedicated router sub-agent priming them. They treated a tool name as a shell command or scripted their way around it. Part of that was the harness, not the models: gpt-oss:20b did call `list_capabilities` correctly but could not carry the discovery into `call_tool` inside a general task, and the one approach that completed the sequence (the sub-agent) was blocked by the harness's own agent-tool argument validation before it ever reached the router.
 
-**Measurement 2 — 2026-09-19 and 2026-09-21, DeepSeek Harness, router tools registered natively by the [DSH bundle](#native-deepseek-harness-dsh-bundle).** The same model family (`qwen3:30b-a3b-instruct-2507`, 32K window) **used the router with no bypass.** 09-19, two sessions whose prompts named the tools: `list_capabilities` once, then `list_capabilities` ×8 → `call_tool(luminari-scripts, service_status)`. 09-21, one session, three ordinary prompts that named no tool ("Which of the studio's services are running right now?", "How many n8n workflows do we have, and which were edited most recently?", "What did we learn last time a bridge commit wrote stale bytes?"): the call log shows `list_capabilities(studio-jobs)` → `call_tool(studio-jobs, pipeline_status)`, then `call_tool(n8n, list)` (wrong name, `ok: false`) → `call_tool(n8n, n8n_list_workflows)` (`ok: true`, 12,963 chars shaped by the ladder) — the model corrected itself from the router's error — and **zero `bypass` rows**; the third prompt was answered with the companion plugin's `recall`/`search` plus built-in `glob`/`read`, which is the right tool, not a bypass. That is three sessions and one model: enough to show Measurement 1 is **not a verdict on these models**, not enough to promise yours will behave.
+**Measurement 2 — 2026-09-19 and 2026-09-21, DeepSeek Harness, router tools registered natively by the [DSH bundle](#native-deepseek-harness-dsh-bundle).** The same model family (`qwen3:30b-a3b-instruct-2507`, 32K window) **used the router with no bypass.** 09-19, two sessions whose prompts named the tools: `list_capabilities` once, then `list_capabilities` ×8 → `call_tool(ops-scripts, service_status)`. 09-21, one session, three ordinary prompts that named no tool ("Which of the project's services are running right now?", "How many n8n workflows do we have, and which were edited most recently?", "What did we learn last time a bridge commit wrote stale bytes?"): the call log shows `list_capabilities(jobs)` → `call_tool(jobs, pipeline_status)`, then `call_tool(n8n, list)` (wrong name, `ok: false`) → `call_tool(n8n, n8n_list_workflows)` (`ok: true`, 12,963 chars shaped by the ladder) — the model corrected itself from the router's error — and **zero `bypass` rows**; the third prompt was answered with the companion plugin's `recall`/`search` plus built-in `glob`/`read`, which is the right tool, not a bypass. That is three sessions and one model: enough to show Measurement 1 is **not a verdict on these models**, not enough to promise yours will behave.
 
 So: `--selftest` proves the *saving* and that your backends start — it does **not** prove your model will drive the router in your harness. **Test discovery→call with your actual model and harness before committing**, and measure rather than guess: every router call is appended to `~/.tool-guardian/calls.jsonl` (`TOOL_GUARDIAN_CALL_LOG`) with a session id, and under DSH a shell call that does a router tool's job is logged there as `kind: "bypass"` (and can be nudged or denied). After a few real tasks, **`/toolguardian bypass`** (DSH) or **`tool-guardian --bypass-summary`** (any client) reads that file for you: router calls, every bypass with the exact `call_tool(...)` it should have been, and sessions that never touched the router. Over plain MCP, see [bypass detection and its limits](#bypass-detection-over-plain-mcp-and-its-limits). If it won't, expose a small *curated, visible* subset of servers instead of routing everything behind a catalogue the model never opens.
 
@@ -138,7 +140,7 @@ It is one repo and one Python router. Pick the front door that matches your harn
 |---|---|---|
 | Works with | Claude Code, OpenCode, Cline, Continue ([tested configs](#works-with)), Claude Desktop, OpenClaude, Cursor, anything that speaks MCP over stdio | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) |
 | Install | `pip install tool-guardian` | `dsh plugin --profile <name> add dsh-tool-guardian` |
-| Hides MCP schemas behind 3 router tools | yes | yes, registered natively |
+| Hides MCP schemas behind 6 router tools (8 with [skills](#skills)) | yes | yes, registered natively |
 | Output ladder on results | results of `call_tool` | **every** tool's result (`bash`, `grep`, `web_fetch`, ...) |
 | Tool groups with token prices | `list_groups_with_costs` | plus `activate_group`, and DSH's own built-in tools can be grouped and hidden too |
 | Notices a shell call doing a router tool's job | — | logs, nudges or denies it |
@@ -146,7 +148,7 @@ It is one repo and one Python router. Pick the front door that matches your harn
 
 ```mermaid
 flowchart LR
-    A["Your agent<br/>(Claude Code, DSH, any MCP client)"] -->|"3 tools, ~300 tokens"| B["Tool Guardian"]
+    A["Your agent<br/>(Claude Code, DSH, any MCP client)"] -->|"6 tools, ~930 tokens for 7 servers"| B["Tool Guardian"]
     B -->|"on demand"| C["filesystem"]
     B -->|"on demand"| D["git"]
     B -->|"on demand"| E["n8n, database, ..."]
@@ -196,7 +198,7 @@ tool-guardian-setup remove git
 name that already exists unless you pass `--replace`, checks the command is on your PATH, warns about any `${VAR}` that is
 not set in your environment or `.env`, and ends with the doctor result for that one server. Then restart your MCP client
 (or start a new DSH session) to load it.
-Every server you add is automatically behind the router's 3 tools: with no groups config it gets its own group named
+Every server you add is automatically behind the router's 6 tools: with no groups config it gets its own group named
 after the server; with a custom groups config it lands in `other` until you add it to a group.
 
 `import` writes `~/.tool-guardian/mcp.json` (backing up any existing file), skips what it can't route yet
@@ -238,7 +240,8 @@ launches it.
   the config file's directory (or the cwd) and walking up to 5 parent
   directories, loading the first `.env` it finds. This lets your config live
   in a nested folder while the `.env` sits at the project root. Values already
-  in the real environment win over the file; a missing `.env` is a no-op,
+  in the real environment win over the file, and the `TOOL_GUARDIAN_*` settings
+  themselves can live there too; a missing `.env` is a no-op,
   never an error.
 
   Example — config nested under the project, `.env` at the root:
@@ -285,7 +288,7 @@ Everything your servers can do is still reachable — the model just discovers i
 tool-guardian --selftest
 ```
 
-Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. *"router tools cost ~310 tokens vs ~28,700 for the full set behind them → ~28,390 freed on every request."* It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
+Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. *"router tools cost ~310 tokens vs ~28,700 for the full set behind them → ~28,390 freed on every request."* Below the totals it prints one `[server] N tools, ~M tokens` line per server, and it exits non-zero if any configured server failed to start. It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
 
 Under DSH, type **`/toolguardian`** in a session for the same report from the running plugin: each server's status and tool count, the tokens freed on every request, active groups, ladder and bypass counters, and the update line.
 
@@ -305,6 +308,15 @@ Definitions are half the problem; one 40 KB build log is the other half. Every `
 **Nothing is lost silently.** Before any lossy step the full original is archived, the result says so in one line, and the model can call **`retrieve_spill(id, grep=…)`** to read it back. If the archive cannot be written, the original is returned instead. Same input, same output, always — so provider prompt caches keep hitting. `TOOL_GUARDIAN_LADDER=0` turns it off.
 
 `list_groups_with_costs` prices each tool group in context tokens, and every router call is logged (argument *values* never are) to `~/.tool-guardian/calls.jsonl` so you can measure whether your model actually uses the router.
+
+## Skills
+
+The same catalogue-on-demand idea, applied to `SKILL.md` files. Point `TOOL_GUARDIAN_SKILLS` at one or more folders (separated by `:` on Linux/macOS, `;` on Windows); every `SKILL.md` one or two levels below a root is a skill, named by its front-matter `name` (or its folder).
+
+- **`list_skills`** — one line per skill: name and purpose. Its description names every skill, so the model knows they exist.
+- **`read_skill(name)`** — the full text of one skill. A name is a name, never a path: `/`, `\` and `..` are refused.
+
+The two tools appear only when at least one skill is found. `tool-guardian --skills-report` prints what the catalogue saves against loading every skill up front.
 
 ## Measured savings
 
@@ -402,10 +414,10 @@ Under DSH the plugin sees every shell call before it runs, so a bypass is logged
 For real bypass detection in **Claude Code**, add its `PreToolUse` hook, which matches shell commands against the router's saved tool names and writes to the same call log (names only, never the command text; any error means "allow"):
 
 ```json
-{ "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "tool-guardian --hook-pretooluse" } ] } ] } }
+{ "hooks": { "PreToolUse": [ { "matcher": "Bash|PowerShell", "hooks": [ { "type": "command", "command": "tool-guardian --hook-pretooluse" } ] } ] } }
 ```
 
-`--mode deny` / `TOOL_GUARDIAN_HOOK_MODE=deny` blocks the call and tells Claude which `call_tool(...)` to use. The hook is tested against Claude Code's documented `PreToolUse` payload and against a payload captured from a live Claude Code 2.1.296 session, where deny mode blocked the call (see [Works with](#works-with)); [`examples/claude-code/settings.json`](examples/claude-code/settings.json) also matches `PowerShell`. Other clients without a pre-tool hook get the two server-side signals only.
+`--mode deny` / `TOOL_GUARDIAN_HOOK_MODE=deny` blocks the call and tells Claude which `call_tool(...)` to use. The hook is tested against Claude Code's documented `PreToolUse` payload and against a payload captured from a live Claude Code 2.1.296 session, where deny mode blocked the call (see [Works with](#works-with)); [`examples/claude-code/settings.json`](examples/claude-code/settings.json) is the same block. Other clients without a pre-tool hook get the two server-side signals only.
 
 ## Compatibility
 
@@ -427,7 +439,7 @@ For real bypass detection in **Claude Code**, add its `PreToolUse` hook, which m
 
 - **Failure is loud, on purpose.** A router is a single point of failure: without one a broken server costs you that server; behind one it could cost you all of them. So an unreachable backend is reported as `UNKNOWN` with its real error, **never as an empty tool list**. A model that asks for a server and gets `[]` concludes the capability doesn't exist and quietly works around it — the exact failure this avoids.
 - **Built for models, not just machines.** It accepts a tool's `args` as either an object or a JSON string, aliases the near-misses models actually send (`query`/`name` → `server`), and ends every result with the concrete **NEXT STEP** to call — because a model that receives a catalogue and no instruction tends to stop there instead of finishing the task.
-- **The catalogue names your servers.** Three unnamed generic tools give a model no reason to believe any capability exists, so it improvises. Naming the servers in the tool description costs a few tokens and is the difference between a catalogue the model opens and three tools it ignores.
+- **The catalogue names your servers.** Six unnamed generic tools give a model no reason to believe any capability exists, so it improvises. Naming the servers in the tool description costs a few tokens and is the difference between a catalogue the model opens and six tools it ignores.
 
 ## What it does *not* do (yet)
 
