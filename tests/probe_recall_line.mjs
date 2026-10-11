@@ -1,4 +1,4 @@
-// tests/probe_recall_line.mjs -- contract probe for P36 T4's /toolguardian line (overseer-written).
+// tests/probe_recall_line.mjs -- contract probe for the /toolguardian report lines (written from the contract).
 import * as plugin from 'dsh-tool-guardian'
 let pass = 0, total = 0
 const check = (name, cond) => { total++; if (cond) pass++; console.log(`  ${cond ? 'ok  ' : 'FAIL'} ${name}`) }

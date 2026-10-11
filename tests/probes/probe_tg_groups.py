@@ -1,6 +1,4 @@
-# @studio: QA | Overseer probe for tool-guardian's tg_groups.py -- written from the CONTRACT, not from the module
-# @kind: cli
-# @called_by: human | delegate_task acceptance (tgp2_acc_groups.bat)
+# Contract probe for tool-guardian's tg_groups.py -- written from the CONTRACT, not from the module
 """py probe_tg_groups.py [dir-holding-tg_groups.py]   -> last line: probe_tg_groups: N checks, N passed, M failed"""
 import json
 import math

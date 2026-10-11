@@ -1,4 +1,4 @@
-"""tool-guardian discovery ceiling (TJ plan P45 B6, C-Ceiling).
+"""tool-guardian discovery ceiling.
 
 A model that keeps listing/searching tools without ever calling one is
 stopped after `limit` discovery calls in a row; calling a tool resets

@@ -1,11 +1,11 @@
-I need to find the coding lesson with ID 588 using the studio's MCP tools. Let me use the lessons_search tool to locate this specific lesson.
+I need to find the task note with ID 588 using the project's MCP tools. Let me use the notes_search tool to locate this specific note.
 
 <function=call_tool>
 <parameter=server>
-luminari-scripts
+ops-scripts
 </parameter>
 <parameter=tool>
-lessons_search
+notes_search
 </parameter>
 <parameter=args>
 {"query":"588"}

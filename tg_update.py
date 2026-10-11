@@ -1,5 +1,3 @@
-# @job: tg-update-v1
-# @kind: module
 """tg_update.py -- one "update available" line for tool-guardian's --selftest and doctor.  # noqa: E501
 
 Rules this module exists to keep, mirroring the Node notice in update_check.js:

@@ -1,5 +1,5 @@
-// tests/probe_dsh_loopguard.mjs -- contract probe for P36 T5+T6 (DSH side of tool-guardian).
-// Written by the overseer FROM THE CONTRACT before the code existed. Same fake ctx + REAL Python
+// tests/probe_dsh_loopguard.mjs -- contract probe for the loop guard (DSH side of tool-guardian).
+// Written FROM THE CONTRACT before the code existed. Same fake ctx + REAL Python
 // bridge + stub MCP server as tests/dsh_smoke.mjs. Run from the repo root: node tests/probe_dsh_loopguard.mjs
 // Prints `probe_dsh_loopguard: N checks, N passed, M failed`.
 import { mkdtempSync, writeFileSync } from 'node:fs'

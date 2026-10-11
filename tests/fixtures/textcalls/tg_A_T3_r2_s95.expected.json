@@ -1,11 +1,11 @@
 {
  "calls": [
   {
-   "name": "mcp__luminari-scripts__table_for",
+   "name": "mcp__ops-scripts__table_for",
    "args": {
-    "kind": "coding_lesson"
+    "kind": "task_note"
    }
   }
  ],
- "rest_starts_with": "I need to find which NocoDB table studio records of kind \"co"
+ "rest_starts_with": "I need to find which notes database table records of kind \"t"
 }

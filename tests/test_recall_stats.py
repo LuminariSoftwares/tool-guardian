@@ -1,4 +1,4 @@
-"""Contract probe for P36 T4 -- recall tracking (overseer-written, before the code).
+"""Contract probe for recall tracking (written from the contract, before the code).
 
 When the output ladder shortens a result and archives the original, the router counts it
 per tool; when the model reads an archive back with retrieve_spill, the router counts the

@@ -3,11 +3,11 @@
   {
    "name": "call_tool",
    "args": {
-    "server": "luminari-scripts",
-    "tool": "vault_path",
+    "server": "ops-scripts",
+    "tool": "notes_path",
     "args": "{\"type\": \"claudesession\"}"
    }
   }
  ],
- "rest_starts_with": "I need to find the vault folder path where dated (non-living"
+ "rest_starts_with": "I need to find the notes folder path where dated (non-living"
 }

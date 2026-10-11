@@ -90,8 +90,8 @@ tg_spill = _optional("tg_spill")      # archive of the full original behind ever
 tg_groups = _optional("tg_groups")    # tool groups priced in context tokens
 tg_state = _optional("tg_state")      # session ids, state.json, call-log summary, Claude Code hook
 tg_update = _optional("tg_update")    # the one "update available" line
-tg_rank = _optional("tg_rank")        # search scoring + per-server "hints" (P45 B4, C-Hints)
-tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped (P45 B6, C-Ceiling)
+tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
+tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
 
 __version__ = "0.5.0"  # 2026-10-04 release; 2026-10-01: was still "0.3.0" in the 0.4.0 release (update check reported the wrong version)
 
@@ -155,7 +155,7 @@ def est_tokens(obj) -> int:
 
 
 def compact_args(schema) -> str:
-    """One-line argument summary, `name:type` with `?` for optional (2026-10-01, bench1001: discovery took 4.8 model
+    """One-line argument summary, `name:type` with `?` for optional (2026-10-01, bench: discovery took 4.8 model
     requests per task because search -> describe -> call needed a describe round trip just to learn the arguments)."""
     props = (schema or {}).get("properties") or {}
     req = set((schema or {}).get("required") or [])
@@ -404,7 +404,7 @@ def looks_empty(text) -> bool:
     """True when a tool result says it found NOTHING: [], a JSON object whose lists and maps are
     all empty and that carries a zero count or a list field, or a bare "no results". Conservative
     on purpose: an object with an "error" key, any non-empty list, or unrecognised prose is not
-    empty. (2026-10-03, P45 B4: a stale index's empty answer read as proof of absence.)"""
+    empty. (2026-10-03, bench: a stale index's empty answer read as proof of absence.)"""
     s = str(text or "").strip()
     if not s:
         return False
@@ -427,7 +427,7 @@ def looks_empty(text) -> bool:
 
 def _bare_tool(backend, tool: str) -> str:
     """The catalogue prints `server.tool`; models copy it. Accept it when the bare name exists
-    and the full name does not (18 ROUTER ERRORs in 25 P45 B4 sessions)."""
+    and the full name does not (18 ROUTER ERRORs in 25 bench sessions)."""
     pre = backend.name + "."
     if tool.startswith(pre) and backend.find(tool) is None and backend.find(tool[len(pre):]) is not None:
         return tool[len(pre):]
@@ -735,14 +735,14 @@ class Router:
         self._recent = collections.deque(maxlen=20)
         # Every call-log row carries this, so "the last session" is a question the log can answer.
         self.session_id = tg_state.new_session_id() if tg_state is not None else ""
-        # C-Ceiling (P45 B6): discovery calls since the last call_tool, capped at discoveryLimit (default 8).
+        # Discovery ceiling: discovery calls since the last call_tool, capped at discoveryLimit (default 8).
         self._ceiling = (tg_ceiling.DiscoveryCeiling(int(self.options.get("discoveryLimit") or 8))
                          if tg_ceiling is not None else None)
 
     def start(self, servers: dict = None) -> None:
         """Start every backend AT ONCE. Backend.start() never raises (a failure becomes
         that backend's UNKNOWN status), so the slowest server sets the wait, not the sum:
-        seven studio backends took 60 s one after another."""
+        seven backends took 60 s one after another."""
         specs = servers if servers is not None else load_backends(self.config)
         threads = []
         for name, spec in specs.items():
@@ -1033,7 +1033,7 @@ class Router:
     def _handle(self, name: str, args: dict) -> str:
         # Skills are handled on the RAW args, BEFORE _coerce. _coerce aliases
         # "name" -> "server" and POPS it (it exists so a model saying
-        # {"name": "nocodb"} still reaches the right server), which silently ate
+        # {"name": "notes-db"} still reaches the right server), which silently ate
         # read_skill's own "name" argument. Caught by a contract probe, not by
         # the module's own tests.
         if name in ("list_skills", "read_skill"):

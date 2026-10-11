@@ -4,7 +4,7 @@
    "name": "search_capabilities",
    "args": {
     "query": "restore_head",
-    "server": "luminari-capabilities"
+    "server": "capabilities"
    }
   }
  ],

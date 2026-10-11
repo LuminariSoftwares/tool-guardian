@@ -1,5 +1,5 @@
-// P45 B2 seam smoke (written 2026-10-03, before text_toolcall_repair.js existed -- red first).
-// Fake ctx, no DSH boot, no Python bridge (eagerStart false): proves index.js wires the C-Repair
+// Text-call repair seam smoke (written 2026-10-03, before text_toolcall_repair.js existed -- red first).
+// Fake ctx, no DSH boot, no Python bridge (eagerStart false): proves index.js wires the repair
 // transform onto `llm/stream`, honours enabled / logOnly / the env switch, and logs one line per call.
 //   node tests/text_repair_seam_smoke.mjs
 import { mkdtempSync, readFileSync, existsSync } from 'node:fs'

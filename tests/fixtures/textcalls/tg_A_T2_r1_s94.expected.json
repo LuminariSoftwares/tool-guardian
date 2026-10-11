@@ -3,7 +3,7 @@
   {
    "name": "mcp__codebase-memory__search_graph",
    "args": {
-    "project": "luminari-studio",
+    "project": "my-project",
     "query": "to_ledger"
    }
   }

@@ -1,6 +1,5 @@
-# @studio: Guardian | tool-guardian group manifest -- tools grouped, each group priced in context tokens
-# @kind: library
-# @called_by: tool_guardian.Router.handle (list_groups_with_costs) | modules/tg_bridge.py op_groups
+# tool-guardian group manifest -- tools grouped, each group priced in context tokens
+# Called by: tool_guardian.Router.handle (list_groups_with_costs) | modules/tg_bridge.py op_groups
 """py tg_groups.py --servers SERVERS.json [--groups GROUPS.json] [--router-cost N]
 py tg_groups.py --selftest
 
@@ -21,7 +20,7 @@ CONTRACT
     resolve(servers, groups_cfg, group) -> [(server, tool)]; unknown group -> KeyError naming the known ones
     render(groups, router_cost) -> text for a model, last line an exact NEXT STEP
 
-History: written from the P19 contract after an ox attempt (2026-09-19) lost its model stream
+History: written from a contract after an earlier automated attempt (2026-09-19) lost its model stream
 mid-run at 5 of 7 contract-probe checks. MIT licensed.
 """
 from __future__ import annotations

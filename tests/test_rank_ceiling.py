@@ -1,4 +1,4 @@
-"""P45 B4 (C-Hints via tg_rank) and B6 (C-Ceiling via tg_ceiling), 2026-10-03. Fake backends: no processes."""
+"""Search hints (tg_rank) and the discovery ceiling (tg_ceiling), 2026-10-03. Fake backends: no processes."""
 import pytest
 
 import tool_guardian as tg
@@ -7,11 +7,11 @@ pytestmark = pytest.mark.skipif(tg.tg_rank is None or tg.tg_ceiling is None,
                                 reason="tg_rank.py / tg_ceiling.py are not beside tool_guardian.py")
 
 TOOLS = {
-    "luminari-scripts": [{"name": "graph_defines", "description": "find the file and line where a function or class is defined"},
-                         {"name": "stack_find", "description": "search the script index by keyword"}],
+    "ops-scripts": [{"name": "graph_defines", "description": "find the file and line where a function or class is defined"},
+                    {"name": "stack_find", "description": "search the script index by keyword"}],
     "codebase-memory": [{"name": "search_graph", "description": "search the code graph for a symbol"},
                         {"name": "where_used", "description": "list callers of a function"}],
-    "nocodb": [{"name": "list_records", "description": "list rows where a field matches"}],
+    "notes-db": [{"name": "list_records", "description": "list rows where a field matches"}],
 }
 
 
@@ -38,12 +38,12 @@ def test_without_hints_order_is_the_old_scoring():
     # old rule: name substring +3, server equality +2, description substring +1.
     # list_records: "is" in name (+3), "where" and "is" in desc (+2) = 5; where_used: 3+1 = 4; graph_defines: 0+3 = 3.
     # The misranking hints exist to fix.
-    assert first_hit(r, "where is restore_head defined") == "nocodb.list_records"
+    assert first_hit(r, "where is restore_head defined") == "notes-db.list_records"
 
 
 def test_hints_put_graph_defines_first_for_t1():
-    r = make_router(hints={"luminari-scripts": ["defined", "where", "function", "file"]})
-    assert first_hit(r, "where is restore_head defined") == "luminari-scripts.graph_defines"
+    r = make_router(hints={"ops-scripts": ["defined", "where", "function", "file"]})
+    assert first_hit(r, "where is restore_head defined") == "ops-scripts.graph_defines"
 
 
 def test_hints_put_search_graph_first_for_t2():
@@ -63,7 +63,7 @@ def test_eight_discovery_calls_then_ninth_refused():
 def test_call_tool_resets_the_ceiling():
     r = make_router()
     for _ in range(8):
-        r._handle("describe_tool", {"server": "nocodb", "tool": "list_records"})
+        r._handle("describe_tool", {"server": "notes-db", "tool": "list_records"})
     r._ceiling.note("call_tool")            # what _handle does first on call_tool, without spawning a backend
     assert not r._handle("search_capabilities", {"query": "rows"}).startswith("Discovery limit reached")
 

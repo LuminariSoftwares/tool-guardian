@@ -2,7 +2,7 @@
 
 Tool-guardian ranks candidate MCP tools for a user query by scoring each tool
 with a fixed additive rule over the query's tokens, with an optional boost for
-tokens that appear in a per-server "hint" list (TJ plan P45 B4, C-Hints).
+tokens that appear in a per-server "hint" list.
 
 Standard library only. Pure: no network, no filesystem, no process spawning.
 """

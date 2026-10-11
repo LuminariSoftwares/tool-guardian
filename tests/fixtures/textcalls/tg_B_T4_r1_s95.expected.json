@@ -3,11 +3,11 @@
   {
    "name": "call_tool",
    "args": {
-    "server": "luminari-scripts",
-    "tool": "lessons_search",
+    "server": "ops-scripts",
+    "tool": "notes_search",
     "args": "{\"query\":\"588\"}"
    }
   }
  ],
- "rest_starts_with": "I need to find the coding lesson with ID 588 using the studi"
+ "rest_starts_with": "I need to find the task note with ID 588 using the project's"
 }

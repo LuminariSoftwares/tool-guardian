@@ -1,6 +1,5 @@
-# @studio: Guardian | tool-guardian spill store -- archive of full tool results behind every lossy replacement
-# @kind: library
-# @called_by: tool_guardian.Router.shape + retrieve_spill | modules/tg_bridge.py op_ladder
+# tool-guardian spill store -- archive of full tool results behind every lossy replacement
+# Called by: tool_guardian.Router.shape + retrieve_spill | modules/tg_bridge.py op_ladder
 """py tg_spill.py --get ID [--start N] [--max N] [--grep REGEX] [--root DIR]
 py tg_spill.py --selftest
 

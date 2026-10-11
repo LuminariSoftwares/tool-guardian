@@ -1,6 +1,4 @@
-# @studio: QA | Overseer probe for tool-guardian's tg_update.py -- written from the CONTRACT, not from the module
-# @kind: cli
-# @called_by: human | tests/test_contract_probes.py
+# Contract probe for tool-guardian's tg_update.py -- written from the CONTRACT, not from the module
 """py probe_tg_update.py [dir-holding-tg_update.py]   -> last line: probe_tg_update: N checks, N passed, M failed"""
 import json
 import os

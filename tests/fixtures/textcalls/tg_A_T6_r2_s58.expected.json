@@ -1,9 +1,9 @@
 {
  "calls": [
   {
-   "name": "mcp__luminari-scripts__list_gigs",
+   "name": "mcp__ops-scripts__list_templates",
    "args": {}
   }
  ],
- "rest_starts_with": "I'll use the MCP tool to find how many Fiverr gig production"
+ "rest_starts_with": "I'll use the MCP tool to find how many task templates the pr"
 }

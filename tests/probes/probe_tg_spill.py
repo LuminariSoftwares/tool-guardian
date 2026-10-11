@@ -1,6 +1,4 @@
-# @studio: QA | Overseer probe for tool-guardian's tg_spill.py -- written from the CONTRACT, not from the module
-# @kind: cli
-# @called_by: human | delegate_task acceptance (tgp2_acc_spill.bat)
+# Contract probe for tool-guardian's tg_spill.py -- written from the CONTRACT, not from the module
 """py probe_tg_spill.py [dir-holding-tg_spill.py]   -> last line: probe_tg_spill: N checks, N passed, M failed"""
 import hashlib
 import os

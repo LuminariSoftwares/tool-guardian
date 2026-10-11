@@ -1,11 +1,11 @@
-I need to find the vault folder path where dated (non-living) Claude session notes belong. I'll use the luminari-scripts tools to find this information.
+I need to find the notes folder path where dated (non-living) Claude session notes belong. I'll use the ops-scripts tools to find this information.
 
 <function=call_tool>
 <parameter=server>
-luminari-scripts
+ops-scripts
 </parameter>
 <parameter=tool>
-vault_path
+notes_path
 </parameter>
 <parameter=args>
 {"type": "claudesession"}
