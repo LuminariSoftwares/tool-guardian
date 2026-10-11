@@ -93,7 +93,7 @@ tg_update = _optional("tg_update")    # the one "update available" line
 tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
 
-__version__ = "0.5.0"  # 2026-10-04 release; 2026-10-01: was still "0.3.0" in the 0.4.0 release (update check reported the wrong version)
+__version__ = "0.6.0"  # keep equal to pyproject.toml version
 
 PROTOCOL = "2024-11-05"
 SKILL_FILE = "SKILL.md"

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.6.0-beta.1 / PyPI tool-guardian 0.6.0 (2026-10-10)
 
 **Fixes from the 2026-10-10 review**, each with a test that failed before it (`tests/test_review_1010.py`,
 `tests/probe_recall_line.mjs`):
