@@ -273,8 +273,21 @@ def test_selftest_prints_per_server_cost_and_fails_on_any_dead_backend(tmp_path,
     assert re.search(r"^\[stub\] 2 tools, ~\d+ tokens$", out, re.M), out
 
 
+# Answers initialize with a long JSON-RPC error: the same long backend error on every OS
+# (an OS "file not found" message carries the path on Linux but not on Windows).
+LONG_ERROR_SERVER = '''
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("id") is not None:
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg["id"],
+                                     "error": {"code": -32000, "message": "refused: " + "x" * 250}}) + "\\n")
+        sys.stdout.flush()
+'''
+
+
 def test_catalogue_shows_160_chars_of_a_backend_error(tmp_path):
-    r = tg.Router(str(_config(tmp_path, {"broken": {"command": str(tmp_path / ("missing_" + "x" * 200))}})))
+    r = tg.Router(str(_config(tmp_path, {"broken": LONG_ERROR_SERVER})))
     r.start()
     err = r.backends["broken"].error
     assert len(err) > 160
