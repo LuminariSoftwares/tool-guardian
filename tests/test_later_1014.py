@@ -140,3 +140,49 @@ def test_second_respawn_outside_the_window_waits_5s(dying, monkeypatch):
 
 def test_respawns_are_in_the_bridge_stats():
     assert tg.Router("").stats["backend_respawns"] == 0
+
+
+# ---- 3. describe_tool detail=compact|full ----------------------------------------
+
+def _fixture_router():
+    from test_rank_identity import _router, _fixture_sets
+    return _router(_fixture_sets()["bench"])
+
+
+def test_describe_tool_compact_is_the_default():
+    r = _fixture_router()
+    out = r._handle("describe_tool", {"server": "github", "tool": "create_issue"})
+    assert out == r._handle("describe_tool", {"server": "github", "tool": "create_issue", "detail": "compact"})
+    lines = out.split("\n")
+    assert lines[0] == "github.create_issue: Create a new issue in a GitHub repository"
+    assert lines[1] == "required args: owner:string, repo:string, title:string"
+    assert lines[2] == "" and lines[3].startswith("NEXT STEP: use call_tool with server github, tool create_issue, args: ")
+    assert len(lines) == 4 and "inputSchema" not in out
+
+
+def test_describe_tool_full_is_the_old_output():
+    r = _fixture_router()
+    t = r.backends["github"].find("create_issue")
+    out = r._handle("describe_tool", {"server": "github", "tool": "create_issue", "detail": "full"})
+    assert out == (json.dumps(t, indent=2) + "\n\nNEXT STEP: use call_tool with server github, tool create_issue, "
+                   "args: %s." % tg.compact_args(t["inputSchema"]))
+
+
+def test_describe_tool_advertises_detail():
+    schema = {t["name"]: t for t in tg.build_router_tools({})}["describe_tool"]["inputSchema"]
+    assert schema["properties"]["detail"] == {"enum": ["compact", "full"]}
+    assert schema["required"] == ["server", "tool"]
+
+
+def test_describe_tool_compact_is_at_least_40_percent_shorter_on_the_bench_fixtures():
+    r = _fixture_router()
+    compact = full = 0
+    for name, b in sorted(r.backends.items()):
+        for t in b.tools:
+            args = {"server": name, "tool": t["name"]}
+            compact += len(r._handle("describe_tool", dict(args, detail="compact")))
+            full += len(r._handle("describe_tool", dict(args, detail="full")))
+    saved = 1 - compact / full
+    print("describe_tool over 95 bench tools: compact %d chars, full %d chars, %.1f%% shorter"
+          % (compact, full, 100 * saved))
+    assert saved >= 0.40

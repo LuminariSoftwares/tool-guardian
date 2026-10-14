@@ -112,13 +112,15 @@ def read_tunables() -> None:
     """The TOOL_GUARDIAN_* tunables, from the environment. Called at import and again in
     main() after the .env is loaded -- a value set only in .env must still count."""
     global START_TIMEOUT, CALL_TIMEOUT, CHARS_PER_TOKEN, LOG_PATH, SKILLS_DIRS
-    global LADDER_ON, RAW_RESULTS, CALL_LOG
+    global LADDER_ON, RAW_RESULTS, CALL_LOG, DESCRIBE_DETAIL
     START_TIMEOUT = _env_float("TOOL_GUARDIAN_START_TIMEOUT", 90.0)
     CALL_TIMEOUT = _env_float("TOOL_GUARDIAN_CALL_TIMEOUT", 120.0)
     CHARS_PER_TOKEN = _env_float("TOOL_GUARDIAN_CHARS_PER_TOKEN", 3.5)
     LOG_PATH = os.environ.get("TOOL_GUARDIAN_LOG", "")
     SKILLS_DIRS = os.environ.get("TOOL_GUARDIAN_SKILLS", "")   # os.pathsep-separated roots
     LADDER_ON = os.environ.get("TOOL_GUARDIAN_LADDER", "1") not in _OFF
+    # describe_tool's default `detail`: compact (name, one line, required args) or full.
+    DESCRIBE_DETAIL = os.environ.get("TOOL_GUARDIAN_DESCRIBE_DETAIL", "compact").strip().lower() or "compact"
     # The pre-0.3.0 result shape (the raw MCP envelope as indented JSON, cut at 20000).
     RAW_RESULTS = os.environ.get("TOOL_GUARDIAN_RAW_RESULTS", "0") not in _OFF
     # One JSON line per router call (and per bypass the DSH plugin reports). "" disables.
@@ -172,6 +174,16 @@ def compact_args(schema) -> str:
             item += "{" + "|".join(str(v) for v in spec["enum"][:6]) + "}"
         parts.append(item)
     return ", ".join(parts)
+
+
+def describe_compact(server: str, tool: dict) -> str:
+    """describe_tool detail=compact: the name, a one-line description and the required
+    arguments. The NEXT STEP line after it still lists every argument (`?` = optional)."""
+    schema = tool.get("inputSchema") or {}
+    req = set(schema.get("required") or [])
+    props = {k: v for k, v in (schema.get("properties") or {}).items() if k in req}
+    required = compact_args({"properties": props, "required": sorted(req)}) if props else "(none)"
+    return "%s.%s: %s\nrequired args: %s" % (server, tool.get("name"), short(tool.get("description")), required)
 
 
 def short(desc: str, words: int = 12) -> str:
@@ -1151,8 +1163,11 @@ class Router:
                         "list_capabilities(server=\"%s\")"
                         % (b.name, args.get("tool"),
                            ", ".join(x.get("name", "?") for x in b.tools), b.name))
-            return (json.dumps(t, indent=2) + "\n\nNEXT STEP: use call_tool with server %s, tool %s, "
-                    "args: %s." % (b.name, t.get("name"), compact_args(t.get("inputSchema"))))
+            nxt = ("\n\nNEXT STEP: use call_tool with server %s, tool %s, args: %s."
+                   % (b.name, t.get("name"), compact_args(t.get("inputSchema"))))
+            if str(args.get("detail") or DESCRIBE_DETAIL).lower() == "full":
+                return json.dumps(t, indent=2) + nxt
+            return describe_compact(b.name, t) + nxt
         if name == "call_tool":
             if not str(args.get("server") or "") and args.get("tool"):
                 found_at = self._resolve_server(str(args.get("tool")))
@@ -1368,10 +1383,11 @@ def build_router_tools(backends: dict) -> list:
              "limit": {"type": "integer", "description": "max results, default 8"}},
              "required": ["query"]}},
         {"name": "describe_tool",
-         "description": ("Get the full argument schema for one tool. Call after "
-                         "list_capabilities and before call_tool if unsure of args."),
+         "description": ("Get the arguments for one tool (detail=full: whole schema). Call "
+                         "after list_capabilities and before call_tool if unsure of args."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string"}, "tool": {"type": "string"}},
+             "server": {"type": "string"}, "tool": {"type": "string"},
+             "detail": {"enum": ["compact", "full"]}},
              "required": ["server", "tool"]}},
         {"name": "call_tool",
          "description": ("Invoke a tool on a server. THIS IS THE STEP THAT ANSWERS "
