@@ -499,37 +499,55 @@ def validate_args(schema, args) -> tuple:
         return True, (dict(args) if isinstance(args, dict) else {}), []
     if not isinstance(args, dict):
         return False, {}, ["arguments must be a JSON object"]
+    problems = []
+    fixed = _check_object(schema, args, "", problems)
+    return not problems, fixed, problems
+
+
+def _check_object(schema, obj, path, problems) -> dict:
+    """required / type / enum / closed keys for one object, recursing into its
+    properties. `path` is the object's own location ("" at the top), so a fault
+    deep in the tree is named the way the model has to fix it: params.filters[2].op."""
     props = schema.get("properties")
     if not isinstance(props, dict):
         props = {}
     required = schema.get("required")
     if not isinstance(required, (list, tuple)):
         required = []
-    problems = []
     for name in required:
-        if name not in args:
+        if name not in obj:
             spec = props.get(name)
             want = spec.get("type") if isinstance(spec, dict) else None
-            problems.append("missing required argument '%s' (%s)" % (name, want or "any"))
+            problems.append("missing required argument '%s%s' (%s)" % (path, name, want or "any"))
     fixed = {}
-    for key, value in args.items():
+    for key, value in obj.items():
         spec = props.get(key)
-        if isinstance(spec, dict) and isinstance(spec.get("type"), str):
-            value = _coerce_arg(value, spec["type"])
-            if not _arg_is_type(value, spec["type"]):
-                problems.append("argument '%s' should be %s, got %s"
-                                % (key, spec["type"], type(value).__name__))
-        enum = spec.get("enum") if isinstance(spec, dict) else None
-        if isinstance(enum, (list, tuple)) and value not in enum:
-            problems.append("argument '%s' must be one of: %s"
-                            % (key, ", ".join(map(str, enum))))
+        if isinstance(spec, dict):
+            value = _check_value(spec, value, path + str(key), problems)
         if key not in props and schema.get("additionalProperties") is False:
-            problems.append("unknown argument '%s'; allowed: %s"
-                            % (key, ", ".join(sorted(props))))
+            problems.append("unknown argument '%s%s'; allowed: %s"
+                            % (path, key, ", ".join(sorted(props))))
         fixed[key] = value
-    # Nested objects are not walked: a schema is a floor, not a compiler, and a
-    # half-validated tree is better than none for the tool that wants it whole.
-    return not problems, fixed, problems
+    return fixed
+
+
+def _check_value(spec, value, where, problems):
+    """One value against its property schema: the safe coercion, the type, the
+    enum, then the same checks one level down for an object or an array's items."""
+    want = spec.get("type")
+    if isinstance(want, str):
+        value = _coerce_arg(value, want)
+        if not _arg_is_type(value, want):
+            problems.append("argument '%s' should be %s, got %s" % (where, want, type(value).__name__))
+    enum = spec.get("enum")
+    if isinstance(enum, (list, tuple)) and value not in enum:
+        problems.append("argument '%s' must be one of: %s" % (where, ", ".join(map(str, enum))))
+    if isinstance(value, dict) and (spec.get("properties") or spec.get("required")):
+        value = _check_object(spec, value, where + ".", problems)
+    elif isinstance(value, list) and isinstance(spec.get("items"), dict):
+        value = [_check_value(spec["items"], item, "%s[%d]" % (where, i), problems)
+                 for i, item in enumerate(value)]
+    return value
 
 
 # -------------------------------------------------------------- backend ------
