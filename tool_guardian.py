@@ -10,6 +10,7 @@ instead of dozens of specific ones, discovering the rest on demand:
 
     tool-guardian                      run as an MCP server (stdio)
     tool-guardian --selftest           start the backends, print the token saving
+    tool-guardian --prove              three bundled prompts against $TOOL_GUARDIAN_PROVE_URL
     tool-guardian --config path.json   use a specific mcpServers config
     tool-guardian --bypass-summary     router use vs shell bypasses, from the call log
     tool-guardian --hook-pretooluse    Claude Code PreToolUse hook: logs (or denies) shell
@@ -92,6 +93,7 @@ tg_state = _optional("tg_state")      # session ids, state.json, call-log summar
 tg_update = _optional("tg_update")    # the one "update available" line
 tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
+tg_prove = _optional("tg_prove")      # --prove: three bundled prompts against a model endpoint
 
 __version__ = "0.6.0"  # keep equal to pyproject.toml version
 
@@ -1563,6 +1565,8 @@ def main(argv=None) -> int:
     ap.add_argument("--selftest", action="store_true",
                     help="start backends, print the token saving, exit")
     ap.add_argument("--version", action="store_true")
+    ap.add_argument("--prove", action="store_true",
+                    help="run three bundled prompts against $TOOL_GUARDIAN_PROVE_URL; PASS/FAIL each")
     ap.add_argument("--bypass-summary", dest="bypass_summary", action="store_true",
                     help="router calls vs shell bypasses from the call log, then exit")
     ap.add_argument("--session", default="",
@@ -1606,6 +1610,11 @@ def main(argv=None) -> int:
         read_tunables()
     if a.selftest:
         return selftest(a.config)
+    if a.prove:
+        if tg_prove is None:
+            print("--prove unavailable: tg_prove.py is not beside tool_guardian.py")
+            return 2
+        return tg_prove.prove(sys.modules[__name__])
     r = Router(a.config)
     r.start()
     global ROUTER_TOOLS

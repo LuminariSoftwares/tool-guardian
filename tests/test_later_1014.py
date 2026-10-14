@@ -186,3 +186,94 @@ def test_describe_tool_compact_is_at_least_40_percent_shorter_on_the_bench_fixtu
     print("describe_tool over 95 bench tools: compact %d chars, full %d chars, %.1f%% shorter"
           % (compact, full, 100 * saved))
     assert saved >= 0.40
+
+
+# ---- 4. --prove ------------------------------------------------------------------
+
+def _stub_endpoint(stall):
+    """An OpenAI-compatible /v1/chat/completions that plays a model by script. Every reply
+    reports usage prompt 100 / completion 10. stall=True: on the counter prompt it only
+    searches and then gives up -- the stalled session."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    def call(name, args):
+        return {"tool_calls": [{"id": "c1", "type": "function",
+                                "function": {"name": name, "arguments": json.dumps(args)}}]}
+
+    def reply(messages):
+        user = next(m["content"] for m in messages if m["role"] == "user")
+        tools = [m["content"] for m in messages if m["role"] == "tool"]
+        if "add_note" in user:
+            steps = [call("list_capabilities", {"server": "notes"}),
+                     call("describe_tool", {"server": "notes", "tool": "add_note"}),
+                     {"content": "add_note requires title."}]
+        elif "find_notes" in user:
+            steps = [call("call_tool", {"server": "notes", "tool": "find_notes", "args": {
+                "params": {"filters": [{"field": "tag", "op": "eq", "value": "urgent"}]}}}),
+                     {"content": "ids: " + (tools[-1].split("\n")[0] if tools else "")}]
+        elif stall:
+            steps = [call("search_capabilities", {"query": "counter"})] * 3 + [{"content": "I could not find it."}]
+        else:
+            steps = [call("search_capabilities", {"query": "counter"}),
+                     call("call_tool", {"server": "notes", "tool": "get_counter"}),
+                     {"content": tools[-1].split("\n")[0] if tools else ""}]
+        return steps[min(len(tools), len(steps) - 1)]
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            self._send({"data": [{"id": "stub-model"}]})
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            msg = dict({"role": "assistant", "content": None}, **reply(body["messages"]))
+            self._send({"choices": [{"message": msg}], "usage": {"prompt_tokens": 100, "completion_tokens": 10}})
+
+        def _send(self, obj):
+            data = json.dumps(obj).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def _prove(env_extra, tmp_path):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TOOL_GUARDIAN_PROVE_")}
+    env.update(env_extra, TOOL_GUARDIAN_CALL_LOG=str(tmp_path / "calls.jsonl"))
+    return subprocess.run([sys.executable, str(ROOT / "tool_guardian.py"), "--prove"], cwd=str(tmp_path),
+                          capture_output=True, text=True, env=env, timeout=120)
+
+
+def test_prove_without_an_endpoint_names_the_env_var_and_exits_2(tmp_path):
+    r = _prove({}, tmp_path)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "set TOOL_GUARDIAN_PROVE_URL to an OpenAI-compatible base URL" in r.stdout
+
+
+@pytest.mark.parametrize("stall", [False, True])
+def test_prove_against_a_stub_endpoint(tmp_path, stall):
+    srv = _stub_endpoint(stall)
+    try:
+        r = _prove({"TOOL_GUARDIAN_PROVE_URL": "http://127.0.0.1:%d/v1" % srv.server_address[1]}, tmp_path)
+    finally:
+        srv.shutdown()
+    lines = {ln.split()[1]: ln for ln in r.stdout.splitlines() if ln.startswith(("PASS ", "FAIL "))}
+    assert sorted(lines) == ["list_describe", "nested_call", "stalled"], r.stdout + r.stderr
+    assert "model stub-model" in r.stdout
+    assert lines["list_describe"].startswith("PASS") and "prompt 300, completion 30, total 330" in lines["list_describe"]
+    assert lines["nested_call"].startswith("PASS") and "prompt 200, completion 20, total 220" in lines["nested_call"]
+    if stall:
+        assert lines["stalled"].startswith("FAIL") and "stalled: 3 discovery call(s), no call_tool" in lines["stalled"]
+        assert r.returncode == 1
+    else:
+        assert lines["stalled"].startswith("PASS") and "prompt 300, completion 30" in lines["stalled"]
+        assert r.returncode == 0, r.stdout
+    assert not (tmp_path / "calls.jsonl").exists()      # a proof run is not logged as a session
