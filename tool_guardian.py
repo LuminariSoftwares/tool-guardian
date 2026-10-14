@@ -158,6 +158,24 @@ def est_tokens(obj) -> int:
     return int(len(text) / CHARS_PER_TOKEN)
 
 
+def token_counter():
+    """(count(obj) -> int, label) for the selftest report: tiktoken's cl100k_base when it
+    is importable (it stays an optional extra), else est_tokens' chars/3.5 estimate."""
+    try:
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+    except Exception:  # noqa: BLE001  (ImportError, or an encoding that cannot load offline)
+        return est_tokens, "estimate (chars / %g; tiktoken not available)" % CHARS_PER_TOKEN
+
+    def count(obj) -> int:
+        try:
+            text = obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = str(obj)
+        return len(enc.encode(text))
+    return count, "tiktoken cl100k_base"
+
+
 def compact_args(schema) -> str:
     """One-line argument summary, `name:type` with `?` for optional (2026-10-01, bench: discovery took 4.8 model
     requests per task because search -> describe -> call needed a describe round trip just to learn the arguments)."""
@@ -1492,8 +1510,10 @@ def selftest(config: str = "") -> int:
     print(r.catalogue())
     ok = [b for b in r.backends.values() if b.status == "ok"]
     bad = [b for b in r.backends.values() if b.status != "ok"]
-    router_cost = est_tokens(ROUTER_TOOLS)
-    full_cost = sum(est_tokens(b.tools) for b in ok)
+    count, method = token_counter()
+    router_cost = count(ROUTER_TOOLS)
+    full_cost = sum(count(b.tools) for b in ok)
+    print("\ntoken counts: %s" % method)
     print("\nrouter tools cost ~%d tokens vs ~%d for the full set behind them"
           % (router_cost, full_cost))
     if full_cost > router_cost:
@@ -1506,7 +1526,7 @@ def selftest(config: str = "") -> int:
     print("\n%d backend(s) up, %d tools reachable."
           % (len(ok), sum(len(b.tools) for b in ok)))
     for b in sorted(ok, key=lambda x: x.name):
-        print("[%s] %d tools, ~%d tokens" % (b.name, len(b.tools), est_tokens(b.tools)))
+        print("[%s] %d tools, ~%d tokens" % (b.name, len(b.tools), count(b.tools)))
     for b in bad:
         print("  %s: %s -- %s" % (b.name, b.status, b.error[:100]))
     print("\nNOTE: this measures the token SAVING and that backends start. It does"

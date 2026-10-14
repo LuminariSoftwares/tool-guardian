@@ -346,3 +346,35 @@ def test_hook_rules_absent_or_unreadable_keeps_the_default_behaviour(tmp_path, r
     _assert_documented_deny(r.stdout, "jobs", "render_video")
     r = _hook_run(tmp_path, _bash("ls -la"), *args)
     assert r.returncode == 0 and r.stdout == ""
+
+
+# ---- 6. selftest counts with tiktoken when importable -----------------------------
+
+class _FakeEncoding:
+    def encode(self, text):
+        return list(range(len(text) // 2))      # 2 chars per token: easy to tell from the estimate
+
+
+def _selftest_out(tmp_path, capsys):
+    from test_review_1010 import _config
+    from test_tool_guardian import STUB_SERVER
+    code = tg.selftest(str(_config(tmp_path, {"stub": STUB_SERVER})))
+    return code, capsys.readouterr().out
+
+
+def test_selftest_uses_tiktoken_when_importable(tmp_path, capsys, monkeypatch):
+    import types
+    fake = types.ModuleType("tiktoken")
+    fake.get_encoding = lambda name: _FakeEncoding() if name == "cl100k_base" else None
+    monkeypatch.setitem(sys.modules, "tiktoken", fake)
+    code, out = _selftest_out(tmp_path, capsys)
+    assert code == 0 and "token counts: tiktoken cl100k_base" in out, out
+    expected = len(json.dumps(tg.ROUTER_TOOLS, ensure_ascii=False)) // 2
+    assert "router tools cost ~%d tokens" % expected in out, out
+
+
+def test_selftest_falls_back_to_the_estimate_without_tiktoken(tmp_path, capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "tiktoken", None)          # import tiktoken -> ImportError
+    code, out = _selftest_out(tmp_path, capsys)
+    assert code == 0 and "token counts: estimate (chars / 3.5; tiktoken not available)" in out, out
+    assert "router tools cost ~%d tokens" % tg.est_tokens(tg.ROUTER_TOOLS) in out, out
