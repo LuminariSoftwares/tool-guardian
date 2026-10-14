@@ -552,10 +552,22 @@ def _check_value(spec, value, where, problems):
 
 # -------------------------------------------------------------- backend ------
 
+RESPAWN_BACKOFF = (1.0, 5.0)   # seconds before the first respawn, then before every later one
+RESPAWN_WINDOW = 60.0          # a second failure within this many seconds marks the backend DOWN
+
+
+def _backoff_sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+class BackendExited(RuntimeError):
+    """The backend closed stdout: its process is gone."""
+
+
 class Backend:
     """One real MCP server, kept alive so tools/call does not pay a cold start."""
 
-    def __init__(self, name: str, spec: dict):
+    def __init__(self, name: str, spec: dict, stats: dict = None):
         self.name = name
         self.spec = spec or {}
         self.proc = None
@@ -566,6 +578,12 @@ class Backend:
         self._lock = threading.Lock()
         self._lines = queue.Queue()
         self._abandoned = False
+        # Respawn bookkeeping. `stats` is the Router's counter dict, so backend_respawns
+        # reaches the bridge's `stats` op and the /toolguardian report.
+        self.stats = stats if stats is not None else {}
+        self.respawns = 0
+        self._failures = []
+        self._respawn_due = None
 
     def _send(self, obj) -> None:
         self.proc.stdin.write(json.dumps(obj) + "\n")
@@ -596,7 +614,7 @@ class Backend:
                 raise TimeoutError("no reply to id %d within %gs" % (want_id, timeout)) from None
             if line is None:
                 self._lines.put(None)   # EOF stays visible to every later wait
-                raise RuntimeError("server closed stdout")
+                raise BackendExited("server closed stdout")
             try:
                 msg = json.loads(line)
             except ValueError:
@@ -628,6 +646,40 @@ class Backend:
     def _next(self) -> int:
         self._id += 1
         return self._id
+
+    def _failed(self, why: str) -> None:
+        """A started backend exited or stopped answering. The first failure schedules one
+        respawn after RESPAWN_BACKOFF; a second inside RESPAWN_WINDOW marks it DOWN for good."""
+        now = time.monotonic()
+        self._failures = [t for t in self._failures if now - t < RESPAWN_WINDOW] + [now]
+        self.stop()
+        if len(self._failures) >= 2:
+            self._respawn_due = None
+            self.status = "DOWN"
+            self.error = "%s; second failure within %gs, not restarted again" % (why, RESPAWN_WINDOW)
+            log("backend %s: DOWN -- %s" % (self.name, self.error))
+            return
+        wait = RESPAWN_BACKOFF[min(self.respawns, len(RESPAWN_BACKOFF) - 1)]
+        self._respawn_due = now + wait
+        log("backend %s: %s -- respawning in %gs" % (self.name, why, wait))
+
+    def _revive(self) -> None:
+        """Before a call: notice a process that died between calls, and run a scheduled
+        respawn (after its backoff), which re-sends the whole initialize handshake."""
+        if (self.status == "ok" and self._respawn_due is None
+                and self.proc is not None and self.proc.poll() is not None):
+            self._failed("process exited (code %s)" % self.proc.returncode)
+        if self._respawn_due is None:
+            return
+        _backoff_sleep(max(0.0, self._respawn_due - time.monotonic()))
+        self._respawn_due = None
+        self.respawns += 1
+        self.stats["backend_respawns"] = self.stats.get("backend_respawns", 0) + 1
+        self._lines = queue.Queue()
+        self.status, self.error = "respawning", ""
+        self.start()
+        if self.status != "ok":
+            self._failed("respawn failed: %s" % self.error)
 
     def start(self) -> None:
         if self.spec.get("url"):
@@ -699,7 +751,7 @@ class Backend:
                 return t
         return None
 
-    def call(self, tool: str, args: dict):
+    def _check_callable(self, tool: str) -> None:
         if self.status != "ok":
             raise RuntimeError(
                 "server %r is %s: %s. That is UNKNOWN, not 'the tool does not "
@@ -709,6 +761,9 @@ class Backend:
             raise RuntimeError(
                 "server %r has no tool %r. Available: %s"
                 % (self.name, tool, ", ".join(t.get("name", "?") for t in self.tools)))
+
+    def call(self, tool: str, args: dict):
+        self._check_callable(tool)
         # One deadline covers waiting for the lock AND the reply: a call that timed out
         # releases the lock, and a call queued behind it cannot wait longer than its own budget.
         deadline = time.monotonic() + CALL_TIMEOUT
@@ -716,10 +771,29 @@ class Backend:
             raise TimeoutError("server %r is still busy with an earlier call after %gs"
                                % (self.name, CALL_TIMEOUT))
         try:
-            i = self._next()
-            self._send({"jsonrpc": "2.0", "id": i, "method": "tools/call",
-                        "params": {"name": tool, "arguments": args or {}}})
-            return self._await(i, max(deadline - time.monotonic(), 0.001))
+            self._revive()
+            self._check_callable(tool)
+            request = {"jsonrpc": "2.0", "id": self._next(), "method": "tools/call",
+                       "params": {"name": tool, "arguments": args or {}}}
+            try:
+                self._send(request)
+            except OSError:
+                # The pipe was already closed: the call never reached the server, so
+                # sending it to the respawned one cannot run it twice.
+                self._failed("process exited")
+                self._revive()
+                self._check_callable(tool)
+                request["id"] = self._next()
+                self._send(request)
+            return self._await(request["id"], max(deadline - time.monotonic(), 0.001))
+        except TimeoutError:
+            self._failed("no reply within %gs" % CALL_TIMEOUT)
+            raise
+        except BackendExited:
+            self._failed("process exited during a call")
+            raise BackendExited("server %r exited during the call; nothing came back. It is %s."
+                                % (self.name, "DOWN" if self.status == "DOWN"
+                                   else "restarted before the next call")) from None
         finally:
             self._lock.release()
 
@@ -741,7 +815,7 @@ class Router:
                       "original_chars": 0, "final_chars": 0,
                       "schema_rejects": 0, "schema_coercions": 0,
                       "loop_warnings": 0, "loop_blocks": 0,
-                      "recalls": {}}
+                      "backend_respawns": 0, "recalls": {}}
         # Spill id -> the tool whose result it holds, and the ids already counted
         # as recalled. A shortened result the model keeps reading back is a result being
         # shortened too hard, and that is only visible if the two ends are joined up.
@@ -764,7 +838,7 @@ class Router:
         specs = servers if servers is not None else load_backends(self.config)
         threads = []
         for name, spec in specs.items():
-            b = Backend(name, spec)
+            b = Backend(name, spec, stats=self.stats)
             self.backends[name] = b
             t = threading.Thread(target=b.start, name="tg-start-" + name, daemon=True)
             t.start()
@@ -1136,10 +1210,12 @@ class Router:
                 res = b.call(tool, sent)
             except TimeoutError as exc:
                 self._last_meta = {"is_error": True, "rule": "call_timeout"}
+                state = ("it is now DOWN after a second failure" if b.status == "DOWN"
+                         else "it was stopped and is restarted before the next call")
                 return ("[tool-guardian: %s.%s did not answer within %gs (TOOL_GUARDIAN_CALL_TIMEOUT): %s. "
-                        "The server may still be working on it; nothing came back.]\n\nNEXT STEP: try "
+                        "Nothing came back; %s.]\n\nNEXT STEP: try "
                         "once more, or tell the user that %s is not responding."
-                        % (b.name, tool, CALL_TIMEOUT, exc, b.name))
+                        % (b.name, tool, CALL_TIMEOUT, exc, state, b.name))
             if RAW_RESULTS:
                 return json.dumps(res, indent=2)[:LEGACY_CAP]
             text, is_error = render_result(res)
