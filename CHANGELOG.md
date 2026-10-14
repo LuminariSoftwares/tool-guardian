@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased (2026-10-14)
+
+**The "Later" list from the 2026-10-10 review**, each with a test that failed on main before it
+(`tests/test_later_1014.py`, `tests/probe_recall_line.mjs`):
+
+- Argument checks walk nested objects and array items; a problem names its path (`params.filters[2].op`).
+- A backend that exits or times out is respawned once (1 s, then 5 s on later respawns) with a fresh `initialize`
+  handshake; a second failure within 60 s marks it `DOWN`. `backend_respawns` is in `stats` and on `/toolguardian`.
+- `describe_tool` takes `detail=compact|full`; compact (name, one line, required args) is the default and is 80.8 %
+  shorter than full on the bench catalogues. `TOOL_GUARDIAN_DESCRIBE_DETAIL=full` restores the old default. The
+  router's own schemas grow from 934 to 951 tokens on the bench (the new `detail` property).
+- `tool-guardian --prove` runs three bundled prompts against `TOOL_GUARDIAN_PROVE_URL` and prints PASS/FAIL with tokens.
+- `--hook-pretooluse --rules <file>`: JSON allow/deny rules per tool name and argument regex, applied first.
+- `--selftest` counts tokens with `tiktoken` when it is importable and says which counter it used.
+- `TOOL_GUARDIAN_PRESET=small`: per-server catalogue budget 1500 characters, 6-word descriptions.
+- `tests/test_rank_identity.py` asserts search, catalogue and score output on the rank fixtures is unchanged.
+
 ## dsh-tool-guardian 0.6.0-beta.1 / PyPI tool-guardian 0.6.0 (2026-10-10)
 
 **Fixes from the 2026-10-10 review**, each with a test that failed before it (`tests/test_review_1010.py`,

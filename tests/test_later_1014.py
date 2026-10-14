@@ -279,6 +279,19 @@ def test_prove_against_a_stub_endpoint(tmp_path, stall):
     assert not (tmp_path / "calls.jsonl").exists()      # a proof run is not logged as a session
 
 
+def test_prove_leaves_the_hook_catalogue_alone(tmp_path):
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"version": 1, "sessions": [], "catalogue": {
+        "updated": "x", "servers": {"jobs": ["render_video"]}}}), encoding="utf-8")
+    srv = _stub_endpoint(False)
+    try:
+        _prove({"TOOL_GUARDIAN_PROVE_URL": "http://127.0.0.1:%d/v1" % srv.server_address[1],
+                "TOOL_GUARDIAN_STATE": str(state)}, tmp_path)
+    finally:
+        srv.shutdown()
+    assert json.loads(state.read_text(encoding="utf-8"))["catalogue"]["servers"] == {"jobs": ["render_video"]}
+
+
 # ---- 5. hook --rules <file> -------------------------------------------------------
 
 def _hook_run(tmp_path, payload, *args):

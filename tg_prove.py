@@ -228,6 +228,7 @@ def prove(tg, out=sys.stdout, chat=None) -> int:
                          {"model": model, "messages": messages, "tools": tools, "temperature": 0}, key)
     tg.CALL_LOG = ""   # a proof run is not a session of yours: keep it out of the call log
     router = tg.Router("", options={})
+    router.remember_catalogue = lambda: None   # the stub must not replace the hook's catalogue
     router.start({"notes": {"command": sys.executable, "args": [os.path.abspath(__file__), "--backend"],
                             "description": "notes: add, find and count notes"}})
     try:
