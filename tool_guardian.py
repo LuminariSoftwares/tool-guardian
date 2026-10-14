@@ -101,6 +101,7 @@ PROTOCOL = "2024-11-05"
 SKILL_FILE = "SKILL.md"
 _OFF = ("0", "false", "False", "off", "no")
 LEGACY_CAP = 20000
+RANK_DESC_WORDS = 12   # search scores this many description words whatever DESC_WORDS shows
 
 
 def _env_float(name: str, default: float) -> float:
@@ -110,11 +111,21 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+# TOOL_GUARDIAN_PRESET: named defaults for the two catalogue knobs below. "small" is for
+# 8k-context local models. An explicit TOOL_GUARDIAN_CATALOGUE_CHARS / _DESC_WORDS wins.
+#   catalogue_chars  each server's block in list_capabilities is cut at this many chars (0 = no cap)
+#   desc_words       words of a tool or server description shown in catalogue lines
+PRESETS = {
+    "default": {"catalogue_chars": 0, "desc_words": 12},
+    "small": {"catalogue_chars": 1500, "desc_words": 6},
+}
+
+
 def read_tunables() -> None:
     """The TOOL_GUARDIAN_* tunables, from the environment. Called at import and again in
     main() after the .env is loaded -- a value set only in .env must still count."""
     global START_TIMEOUT, CALL_TIMEOUT, CHARS_PER_TOKEN, LOG_PATH, SKILLS_DIRS
-    global LADDER_ON, RAW_RESULTS, CALL_LOG, DESCRIBE_DETAIL
+    global LADDER_ON, RAW_RESULTS, CALL_LOG, DESCRIBE_DETAIL, CATALOGUE_CHARS, DESC_WORDS
     START_TIMEOUT = _env_float("TOOL_GUARDIAN_START_TIMEOUT", 90.0)
     CALL_TIMEOUT = _env_float("TOOL_GUARDIAN_CALL_TIMEOUT", 120.0)
     CHARS_PER_TOKEN = _env_float("TOOL_GUARDIAN_CHARS_PER_TOKEN", 3.5)
@@ -123,6 +134,9 @@ def read_tunables() -> None:
     LADDER_ON = os.environ.get("TOOL_GUARDIAN_LADDER", "1") not in _OFF
     # describe_tool's default `detail`: compact (name, one line, required args) or full.
     DESCRIBE_DETAIL = os.environ.get("TOOL_GUARDIAN_DESCRIBE_DETAIL", "compact").strip().lower() or "compact"
+    preset = PRESETS.get(os.environ.get("TOOL_GUARDIAN_PRESET", "").strip().lower(), PRESETS["default"])
+    CATALOGUE_CHARS = int(_env_float("TOOL_GUARDIAN_CATALOGUE_CHARS", preset["catalogue_chars"]))
+    DESC_WORDS = max(1, int(_env_float("TOOL_GUARDIAN_DESC_WORDS", preset["desc_words"])))
     # The pre-0.3.0 result shape (the raw MCP envelope as indented JSON, cut at 20000).
     RAW_RESULTS = os.environ.get("TOOL_GUARDIAN_RAW_RESULTS", "0") not in _OFF
     # One JSON line per router call (and per bypass the DSH plugin reports). "" disables.
@@ -206,9 +220,10 @@ def describe_compact(server: str, tool: dict) -> str:
     return "%s.%s: %s\nrequired args: %s" % (server, tool.get("name"), short(tool.get("description")), required)
 
 
-def short(desc: str, words: int = 12) -> str:
+def short(desc: str, words: int = 0) -> str:
     """A one-line purpose. The catalogue must stay cheap -- a full description per
-    tool would rebuild the very payload this exists to avoid."""
+    tool would rebuild the very payload this exists to avoid. `words` 0 = DESC_WORDS."""
+    words = words or DESC_WORDS
     parts = " ".join((desc or "").split()).split(" ")
     return " ".join(parts[:words]) + ("..." if len(parts) > words else "")
 
@@ -455,6 +470,20 @@ def looks_empty(text) -> bool:
         return False
     zero_count = any(obj.get(k) == 0 and not isinstance(obj.get(k), bool) for k in _COUNT_KEYS)
     return zero_count or any(isinstance(v, list) for v in obj.values())
+
+
+def _within_budget(entries: list, sep: str, more: str) -> str:
+    """Join entries while they fit in CATALOGUE_CHARS (0 = no cap; at least one is kept),
+    then `more % number_left_out`. One server's catalogue cannot crowd out the rest."""
+    text = sep.join(entries)
+    if CATALOGUE_CHARS <= 0 or len(text) <= CATALOGUE_CHARS:
+        return text
+    kept = entries[:1]
+    for entry in entries[1:]:
+        if len(sep.join(kept + [entry])) > CATALOGUE_CHARS:
+            break
+        kept.append(entry)
+    return sep.join(kept) + more % (len(entries) - len(kept))
 
 
 def _bare_tool(backend, tool: str) -> str:
@@ -917,10 +946,11 @@ class Router:
             if b.status != "ok":
                 return ("%s: %s -- %s\nThis is UNKNOWN, not an empty tool list."
                         % (server, b.status, b.error))
-            listing = "\n".join("%s.%s: %s\n    args: %s" % (server, t.get("name"),
-                                                             short(t.get("description")),
-                                                             compact_args(t.get("inputSchema")))
-                                for t in b.tools)
+            listing = _within_budget(
+                ["%s.%s: %s\n    args: %s" % (server, t.get("name"), short(t.get("description")),
+                                              compact_args(t.get("inputSchema"))) for t in b.tools],
+                "\n", "\n[+%%d more tools not shown (TOOL_GUARDIAN_CATALOGUE_CHARS=%d): "
+                      "search_capabilities with a keyword and server %s finds them]" % (CATALOGUE_CHARS, server))
             # The next step goes in the RESULT, not only the tool description: a
             # description is read once, before the model has the catalogue; a
             # result is read at the moment the model decides what to do next.
@@ -932,8 +962,8 @@ class Router:
             if b.status != "ok":
                 out.append("[%s] %s: %s" % (name, b.status, b.error[:160]))
                 continue
-            out.append("[%s] %d tools: %s" % (name, len(b.tools),
-                       ", ".join(t.get("name", "?") for t in b.tools)))
+            out.append("[%s] %d tools: %s" % (name, len(b.tools), _within_budget(
+                [t.get("name", "?") for t in b.tools], ", ", ", +%d more")))
         if out:
             out.append("\nNEXT STEP: use search_capabilities with a keyword (or list_capabilities with one "
                        "server name) to see a tool's args, then call_tool.")
@@ -966,7 +996,7 @@ class Router:
                 continue
             for t in b.tools:
                 tname = str(t.get("name") or "")
-                low_desc = short(t.get("description")).lower()
+                low_desc = short(t.get("description"), RANK_DESC_WORDS).lower()
                 if tg_rank is not None:
                     score = tg_rank.score({"name": tname, "description": low_desc}, name, tokens,
                                           (b.spec or {}).get("hints"))

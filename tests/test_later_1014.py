@@ -378,3 +378,65 @@ def test_selftest_falls_back_to_the_estimate_without_tiktoken(tmp_path, capsys, 
     code, out = _selftest_out(tmp_path, capsys)
     assert code == 0 and "token counts: estimate (chars / 3.5; tiktoken not available)" in out, out
     assert "router tools cost ~%d tokens" % tg.est_tokens(tg.ROUTER_TOOLS) in out, out
+
+
+# ---- 7. TOOL_GUARDIAN_PRESET=small --------------------------------------------------
+
+_TUNABLES = ("START_TIMEOUT", "CALL_TIMEOUT", "CHARS_PER_TOKEN", "LOG_PATH", "SKILLS_DIRS", "LADDER_ON",
+             "RAW_RESULTS", "CALL_LOG", "DESCRIBE_DETAIL", "CATALOGUE_CHARS", "DESC_WORDS")
+
+
+def _tunables(monkeypatch, preset):
+    if preset is None:
+        monkeypatch.delenv("TOOL_GUARDIAN_PRESET", raising=False)
+    else:
+        monkeypatch.setenv("TOOL_GUARDIAN_PRESET", preset)
+    for name in ("TOOL_GUARDIAN_CATALOGUE_CHARS", "TOOL_GUARDIAN_DESC_WORDS"):
+        monkeypatch.delenv(name, raising=False)
+    tg.read_tunables()
+    import tg_ladder
+    return {n: getattr(tg, n, "<missing>") for n in _TUNABLES}, dict(tg_ladder.DEFAULTS)
+
+
+@pytest.fixture
+def restore_tunables(monkeypatch):
+    yield
+    monkeypatch.undo()
+    tg.read_tunables()
+
+
+def test_small_preset_changes_only_the_documented_values(monkeypatch, restore_tunables):
+    default, ladder_default = _tunables(monkeypatch, None)
+    small, ladder_small = _tunables(monkeypatch, "small")
+    changed = {n: (default[n], small[n]) for n in _TUNABLES if default[n] != small[n]}
+    assert changed == {"CATALOGUE_CHARS": (0, 1500), "DESC_WORDS": (12, 6)}
+    assert ladder_small == ladder_default                          # ladder rules untouched
+    assert default["DESCRIBE_DETAIL"] == small["DESCRIBE_DETAIL"] == "compact"
+    assert tg.PRESETS["small"] == {"catalogue_chars": 1500, "desc_words": 6}
+    monkeypatch.setenv("TOOL_GUARDIAN_DESC_WORDS", "9")            # an explicit value wins over the preset
+    tg.read_tunables()
+    assert tg.DESC_WORDS == 9 and tg.CATALOGUE_CHARS == 1500
+
+
+def test_small_preset_caps_each_server_listing_and_shortens_descriptions(monkeypatch, restore_tunables):
+    _tunables(monkeypatch, "small")
+    r = _fixture_router()
+    listing = r.catalogue("github").split("\n\nNEXT STEP")[0]
+    body, _, note = listing.rpartition("\n")
+    assert len(body) <= 1500, len(body)
+    assert note.startswith("[+") and "more tools not shown (TOOL_GUARDIAN_CATALOGUE_CHARS=1500)" in note
+    assert "search_capabilities with a keyword and server github" in note
+    first = body.split("\n")[0]
+    assert first == "github.create_or_update_file: Create or update a single file..."
+    assert r.backends["memory"].hint().count(" ") <= 6
+    # ranking still scores on the full 12-word description
+    assert [ln.split(":")[0] for ln in r.search("read file").splitlines()[1:4:2]] == \
+        [ln.split(":")[0] for ln in json.loads((ROOT / "tests" / "fixtures" / "rank_golden.json").read_text(
+            encoding="utf-8"))["bench"]["search"]["read file"].splitlines()[1:4:2]]
+
+
+def test_no_preset_leaves_the_listing_whole(monkeypatch, restore_tunables):
+    _tunables(monkeypatch, None)
+    r = _fixture_router()
+    assert "more tools not shown" not in r.catalogue("github")
+    assert r.catalogue("github").count("\n    args: ") == 26
