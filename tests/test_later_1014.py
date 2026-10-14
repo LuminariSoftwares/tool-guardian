@@ -277,3 +277,72 @@ def test_prove_against_a_stub_endpoint(tmp_path, stall):
         assert lines["stalled"].startswith("PASS") and "prompt 300, completion 30" in lines["stalled"]
         assert r.returncode == 0, r.stdout
     assert not (tmp_path / "calls.jsonl").exists()      # a proof run is not logged as a session
+
+
+# ---- 5. hook --rules <file> -------------------------------------------------------
+
+def _hook_run(tmp_path, payload, *args):
+    from test_claude_code_hook import _hook
+    return _hook(tmp_path, payload, {"jobs": ["render_video"]}, *args)
+
+
+def _bash(command):
+    from test_claude_code_hook import DOCS
+    payload = json.loads(json.dumps(DOCS))
+    payload["tool_input"]["command"] = command
+    return payload
+
+
+def _rules(tmp_path, rules):
+    path = tmp_path / "rules.json"
+    path.write_text(json.dumps(rules), encoding="utf-8")
+    return str(path)
+
+
+def test_hook_rules_allow_lets_a_router_tool_command_through(tmp_path):
+    from test_claude_code_hook import _rows
+    rules = _rules(tmp_path, {"allow": [{"tool": "Bash", "args": {"command": r"^python scripts/render_video --dry"}}]})
+    r = _hook_run(tmp_path, _bash("python scripts/render_video --dry-run"), "--mode", "deny", "--rules", rules)
+    assert r.returncode == 0 and r.stdout == "" and _rows(tmp_path) == []
+    # a command the allow pattern does not cover still gets the default behaviour
+    r = _hook_run(tmp_path, _bash("python scripts/render_video --all"), "--mode", "deny", "--rules", rules)
+    assert json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_hook_rules_deny_by_argument_regex_and_by_tool_name(tmp_path):
+    from test_claude_code_hook import _assert_documented_deny
+    rules = _rules(tmp_path, {"deny": [
+        {"tool": "Bash", "args": {"command": r"\brm\s+-rf\b"}, "reason": "no recursive deletes"},
+        {"tool": "WebFetch"}]})
+    r = _hook_run(tmp_path, _bash("rm -rf build"), "--rules", rules)        # default mode is log
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert r.returncode == 0 and out["permissionDecision"] == "deny"
+    assert out["permissionDecisionReason"] == "no recursive deletes"
+    fetch = {"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": "WebFetch",
+             "tool_input": {"url": "https://example.com"}}
+    r = _hook_run(tmp_path, fetch, "--rules", rules)
+    assert json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"].startswith(
+        "denied by the tool-guardian rules file")
+    # deny wins over allow; a command no rule matches gets the default behaviour (here: deny)
+    both = _rules(tmp_path, {"allow": [{"tool": "Bash"}], "deny": [{"tool": "Bash", "args": {"command": "render"}}]})
+    r = _hook_run(tmp_path, _bash("python scripts/render_video --all"), "--rules", both)
+    assert "rules file" in json.loads(r.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    r = _hook_run(tmp_path, _bash("python scripts/render_video --all"), "--mode", "deny",
+                  "--rules", _rules(tmp_path, {"deny": [{"tool": "Bash", "args": {"command": "^ls"}}]}))
+    _assert_documented_deny(r.stdout, "jobs", "render_video")
+
+
+@pytest.mark.parametrize("rules_arg", [None, "missing.json", "broken"])
+def test_hook_rules_absent_or_unreadable_keeps_the_default_behaviour(tmp_path, rules_arg):
+    from test_claude_code_hook import _assert_documented_deny
+    args = ["--mode", "deny"]
+    if rules_arg == "broken":
+        (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
+        args += ["--rules", str(tmp_path / "broken.json")]
+    elif rules_arg:
+        args += ["--rules", str(tmp_path / rules_arg)]
+    r = _hook_run(tmp_path, _bash("python scripts/render_video --all"), *args)
+    assert r.returncode == 0
+    _assert_documented_deny(r.stdout, "jobs", "render_video")
+    r = _hook_run(tmp_path, _bash("ls -la"), *args)
+    assert r.returncode == 0 and r.stdout == ""

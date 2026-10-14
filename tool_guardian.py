@@ -1550,12 +1550,14 @@ def bypass_summary(session: str = "", since_hours: float = 24.0, log_path: str =
     return "call log: %s\n%s" % (path, tg_state.render_bypass_summary(summary))
 
 
-def hook_pretooluse(stdin_text: str, mode: str = "") -> tuple:
-    """Claude Code PreToolUse hook. Never fails the user's shell call: any problem is exit 0."""
+def hook_pretooluse(stdin_text: str, mode: str = "", rules: str = "") -> tuple:
+    """Claude Code PreToolUse hook. Never fails the user's shell call: any problem is exit 0.
+    `rules`: an optional JSON allow/deny file, applied before the default behaviour."""
     if tg_state is None:
         return 0, ""
     mode = mode or os.environ.get("TOOL_GUARDIAN_HOOK_MODE", "log")
-    return tg_state.run_hook(stdin_text, log_path=CALL_LOG, mode=mode)
+    return tg_state.run_hook(stdin_text, log_path=CALL_LOG, mode=mode,
+                             policy=tg_state.load_hook_policy(rules))
 
 
 def main(argv=None) -> int:
@@ -1577,6 +1579,8 @@ def main(argv=None) -> int:
                     help="Claude Code PreToolUse hook: read the hook JSON on stdin, log a bypass")
     ap.add_argument("--mode", default="", choices=["", "log", "deny"],
                     help="with --hook-pretooluse: log (default) or deny ($TOOL_GUARDIAN_HOOK_MODE)")
+    ap.add_argument("--rules", default="",
+                    help="with --hook-pretooluse: JSON allow/deny rules file, applied first")
     ap.add_argument("--skills-report", dest="skills_report", action="store_true",
                     help="print the token saving for skills configured in "
                          "TOOL_GUARDIAN_SKILLS and exit")
@@ -1584,7 +1588,7 @@ def main(argv=None) -> int:
     if a.hook:
         # First, and before .env loading: a hook runs on every shell call and must stay fast.
         try:
-            code, out = hook_pretooluse(sys.stdin.read(), a.mode)
+            code, out = hook_pretooluse(sys.stdin.read(), a.mode, a.rules)
         except Exception:  # noqa: BLE001  (never break the user's shell)
             code, out = 0, ""
         if out:

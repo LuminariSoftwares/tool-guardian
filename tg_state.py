@@ -441,11 +441,77 @@ def _append_call_log(log_path, row):
         pass
 
 
-def run_hook(stdin_text, state_path=None, log_path=None, mode="log", rules=None, clock=None):
-    """The PreToolUse entry point.  Returns ``(exit_code, stdout_text)``; never raises."""
+def load_hook_policy(path):
+    """The --rules file: {"allow": [rule...], "deny": [rule...]}, each rule
+    {"tool": regex on tool_name (whole name), "args": {key: regex searched in tool_input[key]},
+    "reason": deny text}. Absent, unreadable or not an object -> None (default behaviour)."""
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError) as exc:
+        print(f"tool-guardian hook: rules file ignored ({exc})", file=sys.stderr)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _rule_matches(rule, payload):
+    if not isinstance(rule, dict):
+        return False
+    try:
+        if not re.fullmatch(_text(rule.get("tool")) or ".*", _text(payload.get("tool_name"))):
+            return False
+        tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+        for key, pattern in (rule.get("args") or {}).items():
+            value = tool_input.get(key)
+            if value is None:
+                return False
+            text = value if isinstance(value, str) else json.dumps(value)
+            if re.search(_text(pattern), text) is None:
+                return False
+    except (re.error, AttributeError, TypeError):
+        return False
+    return True
+
+
+def apply_hook_policy(payload, policy):
+    """("deny", reason) / ("allow", "") / (None, "") -- deny rules first, so deny wins.
+    "allow" only exempts the call from tool-guardian's own check; it approves nothing."""
+    if not isinstance(policy, dict):
+        return (None, "")
+    for i, rule in enumerate(policy.get("deny") or []):
+        if _rule_matches(rule, payload):
+            reason = _text(rule.get("reason")) or (
+                f"denied by the tool-guardian rules file (deny rule {i}: {_text(payload.get('tool_name'))})")
+            return ("deny", reason)
+    for rule in policy.get("allow") or []:
+        if _rule_matches(rule, payload):
+            return ("allow", "")
+    return (None, "")
+
+
+def _deny_output(reason):
+    return json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    })
+
+
+def run_hook(stdin_text, state_path=None, log_path=None, mode="log", rules=None, clock=None, policy=None):
+    """The PreToolUse entry point.  Returns ``(exit_code, stdout_text)``; never raises.
+    ``policy`` (from load_hook_policy) is applied before the default behaviour."""
     try:
         payload = json.loads(stdin_text) if stdin_text else None
         if not isinstance(payload, dict):
+            return (0, "")
+        decision, reason = apply_hook_policy(payload, policy)
+        if decision == "deny":
+            return (0, _deny_output(reason))
+        if decision == "allow":
             return (0, "")
         catalogue = load_state(default_state_path() if state_path is None else state_path)
         catalogue = (catalogue.get("catalogue") or {}).get("servers")
@@ -483,14 +549,7 @@ def run_hook(stdin_text, state_path=None, log_path=None, mode="log", rules=None,
                 f' instead of the shell; describe_tool(server="{server}", tool="{name}")'
                 " shows its arguments."
             )
-            decision = {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": reason,
-                }
-            }
-            return (0, json.dumps(decision))
+            return (0, _deny_output(reason))
         return (0, "")
     except Exception:  # noqa: BLE001 -- a hook must never break the shell
         return (0, "")
