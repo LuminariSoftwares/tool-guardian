@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.7.0-beta.1 / PyPI tool-guardian 0.7.0 (2026-10-14)
+
+- `server.json` for the official MCP Registry (`uvx tool-guardian`).
 
 **MCP tool annotations and Registry markers (2026-10-15):**
 
