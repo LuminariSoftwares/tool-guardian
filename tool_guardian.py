@@ -10,6 +10,7 @@ instead of dozens of specific ones, discovering the rest on demand:
 
     tool-guardian                      run as an MCP server (stdio)
     tool-guardian --selftest           start the backends, print the token saving
+    tool-guardian --prove              three bundled prompts against $TOOL_GUARDIAN_PROVE_URL
     tool-guardian --config path.json   use a specific mcpServers config
     tool-guardian --bypass-summary     router use vs shell bypasses, from the call log
     tool-guardian --hook-pretooluse    Claude Code PreToolUse hook: logs (or denies) shell
@@ -92,6 +93,7 @@ tg_state = _optional("tg_state")      # session ids, state.json, call-log summar
 tg_update = _optional("tg_update")    # the one "update available" line
 tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
+tg_prove = _optional("tg_prove")      # --prove: three bundled prompts against a model endpoint
 
 __version__ = "0.6.0"  # keep equal to pyproject.toml version
 
@@ -99,6 +101,7 @@ PROTOCOL = "2024-11-05"
 SKILL_FILE = "SKILL.md"
 _OFF = ("0", "false", "False", "off", "no")
 LEGACY_CAP = 20000
+RANK_DESC_WORDS = 12   # search scores this many description words whatever DESC_WORDS shows
 
 
 def _env_float(name: str, default: float) -> float:
@@ -108,17 +111,32 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+# TOOL_GUARDIAN_PRESET: named defaults for the two catalogue knobs below. "small" is for
+# 8k-context local models. An explicit TOOL_GUARDIAN_CATALOGUE_CHARS / _DESC_WORDS wins.
+#   catalogue_chars  each server's block in list_capabilities is cut at this many chars (0 = no cap)
+#   desc_words       words of a tool or server description shown in catalogue lines
+PRESETS = {
+    "default": {"catalogue_chars": 0, "desc_words": 12},
+    "small": {"catalogue_chars": 1500, "desc_words": 6},
+}
+
+
 def read_tunables() -> None:
     """The TOOL_GUARDIAN_* tunables, from the environment. Called at import and again in
     main() after the .env is loaded -- a value set only in .env must still count."""
     global START_TIMEOUT, CALL_TIMEOUT, CHARS_PER_TOKEN, LOG_PATH, SKILLS_DIRS
-    global LADDER_ON, RAW_RESULTS, CALL_LOG
+    global LADDER_ON, RAW_RESULTS, CALL_LOG, DESCRIBE_DETAIL, CATALOGUE_CHARS, DESC_WORDS
     START_TIMEOUT = _env_float("TOOL_GUARDIAN_START_TIMEOUT", 90.0)
     CALL_TIMEOUT = _env_float("TOOL_GUARDIAN_CALL_TIMEOUT", 120.0)
     CHARS_PER_TOKEN = _env_float("TOOL_GUARDIAN_CHARS_PER_TOKEN", 3.5)
     LOG_PATH = os.environ.get("TOOL_GUARDIAN_LOG", "")
     SKILLS_DIRS = os.environ.get("TOOL_GUARDIAN_SKILLS", "")   # os.pathsep-separated roots
     LADDER_ON = os.environ.get("TOOL_GUARDIAN_LADDER", "1") not in _OFF
+    # describe_tool's default `detail`: compact (name, one line, required args) or full.
+    DESCRIBE_DETAIL = os.environ.get("TOOL_GUARDIAN_DESCRIBE_DETAIL", "compact").strip().lower() or "compact"
+    preset = PRESETS.get(os.environ.get("TOOL_GUARDIAN_PRESET", "").strip().lower(), PRESETS["default"])
+    CATALOGUE_CHARS = int(_env_float("TOOL_GUARDIAN_CATALOGUE_CHARS", preset["catalogue_chars"]))
+    DESC_WORDS = max(1, int(_env_float("TOOL_GUARDIAN_DESC_WORDS", preset["desc_words"])))
     # The pre-0.3.0 result shape (the raw MCP envelope as indented JSON, cut at 20000).
     RAW_RESULTS = os.environ.get("TOOL_GUARDIAN_RAW_RESULTS", "0") not in _OFF
     # One JSON line per router call (and per bypass the DSH plugin reports). "" disables.
@@ -154,6 +172,24 @@ def est_tokens(obj) -> int:
     return int(len(text) / CHARS_PER_TOKEN)
 
 
+def token_counter():
+    """(count(obj) -> int, label) for the selftest report: tiktoken's cl100k_base when it
+    is importable (it stays an optional extra), else est_tokens' chars/3.5 estimate."""
+    try:
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+    except Exception:  # noqa: BLE001  (ImportError, or an encoding that cannot load offline)
+        return est_tokens, "estimate (chars / %g; tiktoken not available)" % CHARS_PER_TOKEN
+
+    def count(obj) -> int:
+        try:
+            text = obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = str(obj)
+        return len(enc.encode(text))
+    return count, "tiktoken cl100k_base"
+
+
 def compact_args(schema) -> str:
     """One-line argument summary, `name:type` with `?` for optional (2026-10-01, bench: discovery took 4.8 model
     requests per task because search -> describe -> call needed a describe round trip just to learn the arguments)."""
@@ -174,9 +210,20 @@ def compact_args(schema) -> str:
     return ", ".join(parts)
 
 
-def short(desc: str, words: int = 12) -> str:
+def describe_compact(server: str, tool: dict) -> str:
+    """describe_tool detail=compact: the name, a one-line description and the required
+    arguments. The NEXT STEP line after it still lists every argument (`?` = optional)."""
+    schema = tool.get("inputSchema") or {}
+    req = set(schema.get("required") or [])
+    props = {k: v for k, v in (schema.get("properties") or {}).items() if k in req}
+    required = compact_args({"properties": props, "required": sorted(req)}) if props else "(none)"
+    return "%s.%s: %s\nrequired args: %s" % (server, tool.get("name"), short(tool.get("description")), required)
+
+
+def short(desc: str, words: int = 0) -> str:
     """A one-line purpose. The catalogue must stay cheap -- a full description per
-    tool would rebuild the very payload this exists to avoid."""
+    tool would rebuild the very payload this exists to avoid. `words` 0 = DESC_WORDS."""
+    words = words or DESC_WORDS
     parts = " ".join((desc or "").split()).split(" ")
     return " ".join(parts[:words]) + ("..." if len(parts) > words else "")
 
@@ -425,6 +472,20 @@ def looks_empty(text) -> bool:
     return zero_count or any(isinstance(v, list) for v in obj.values())
 
 
+def _within_budget(entries: list, sep: str, more: str) -> str:
+    """Join entries while they fit in CATALOGUE_CHARS (0 = no cap; at least one is kept),
+    then `more % number_left_out`. One server's catalogue cannot crowd out the rest."""
+    text = sep.join(entries)
+    if CATALOGUE_CHARS <= 0 or len(text) <= CATALOGUE_CHARS:
+        return text
+    kept = entries[:1]
+    for entry in entries[1:]:
+        if len(sep.join(kept + [entry])) > CATALOGUE_CHARS:
+            break
+        kept.append(entry)
+    return sep.join(kept) + more % (len(entries) - len(kept))
+
+
 def _bare_tool(backend, tool: str) -> str:
     """The catalogue prints `server.tool`; models copy it. Accept it when the bare name exists
     and the full name does not (18 ROUTER ERRORs in 25 bench sessions)."""
@@ -499,45 +560,75 @@ def validate_args(schema, args) -> tuple:
         return True, (dict(args) if isinstance(args, dict) else {}), []
     if not isinstance(args, dict):
         return False, {}, ["arguments must be a JSON object"]
+    problems = []
+    fixed = _check_object(schema, args, "", problems)
+    return not problems, fixed, problems
+
+
+def _check_object(schema, obj, path, problems) -> dict:
+    """required / type / enum / closed keys for one object, recursing into its
+    properties. `path` is the object's own location ("" at the top), so a fault
+    deep in the tree is named the way the model has to fix it: params.filters[2].op."""
     props = schema.get("properties")
     if not isinstance(props, dict):
         props = {}
     required = schema.get("required")
     if not isinstance(required, (list, tuple)):
         required = []
-    problems = []
     for name in required:
-        if name not in args:
+        if name not in obj:
             spec = props.get(name)
             want = spec.get("type") if isinstance(spec, dict) else None
-            problems.append("missing required argument '%s' (%s)" % (name, want or "any"))
+            problems.append("missing required argument '%s%s' (%s)" % (path, name, want or "any"))
     fixed = {}
-    for key, value in args.items():
+    for key, value in obj.items():
         spec = props.get(key)
-        if isinstance(spec, dict) and isinstance(spec.get("type"), str):
-            value = _coerce_arg(value, spec["type"])
-            if not _arg_is_type(value, spec["type"]):
-                problems.append("argument '%s' should be %s, got %s"
-                                % (key, spec["type"], type(value).__name__))
-        enum = spec.get("enum") if isinstance(spec, dict) else None
-        if isinstance(enum, (list, tuple)) and value not in enum:
-            problems.append("argument '%s' must be one of: %s"
-                            % (key, ", ".join(map(str, enum))))
+        if isinstance(spec, dict):
+            value = _check_value(spec, value, path + str(key), problems)
         if key not in props and schema.get("additionalProperties") is False:
-            problems.append("unknown argument '%s'; allowed: %s"
-                            % (key, ", ".join(sorted(props))))
+            problems.append("unknown argument '%s%s'; allowed: %s"
+                            % (path, key, ", ".join(sorted(props))))
         fixed[key] = value
-    # Nested objects are not walked: a schema is a floor, not a compiler, and a
-    # half-validated tree is better than none for the tool that wants it whole.
-    return not problems, fixed, problems
+    return fixed
+
+
+def _check_value(spec, value, where, problems):
+    """One value against its property schema: the safe coercion, the type, the
+    enum, then the same checks one level down for an object or an array's items."""
+    want = spec.get("type")
+    if isinstance(want, str):
+        value = _coerce_arg(value, want)
+        if not _arg_is_type(value, want):
+            problems.append("argument '%s' should be %s, got %s" % (where, want, type(value).__name__))
+    enum = spec.get("enum")
+    if isinstance(enum, (list, tuple)) and value not in enum:
+        problems.append("argument '%s' must be one of: %s" % (where, ", ".join(map(str, enum))))
+    if isinstance(value, dict) and (spec.get("properties") or spec.get("required")):
+        value = _check_object(spec, value, where + ".", problems)
+    elif isinstance(value, list) and isinstance(spec.get("items"), dict):
+        value = [_check_value(spec["items"], item, "%s[%d]" % (where, i), problems)
+                 for i, item in enumerate(value)]
+    return value
 
 
 # -------------------------------------------------------------- backend ------
 
+RESPAWN_BACKOFF = (1.0, 5.0)   # seconds before the first respawn, then before every later one
+RESPAWN_WINDOW = 60.0          # a second failure within this many seconds marks the backend DOWN
+
+
+def _backoff_sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+class BackendExited(RuntimeError):
+    """The backend closed stdout: its process is gone."""
+
+
 class Backend:
     """One real MCP server, kept alive so tools/call does not pay a cold start."""
 
-    def __init__(self, name: str, spec: dict):
+    def __init__(self, name: str, spec: dict, stats: dict = None):
         self.name = name
         self.spec = spec or {}
         self.proc = None
@@ -548,6 +639,12 @@ class Backend:
         self._lock = threading.Lock()
         self._lines = queue.Queue()
         self._abandoned = False
+        # Respawn bookkeeping. `stats` is the Router's counter dict, so backend_respawns
+        # reaches the bridge's `stats` op and the /toolguardian report.
+        self.stats = stats if stats is not None else {}
+        self.respawns = 0
+        self._failures = []
+        self._respawn_due = None
 
     def _send(self, obj) -> None:
         self.proc.stdin.write(json.dumps(obj) + "\n")
@@ -578,7 +675,7 @@ class Backend:
                 raise TimeoutError("no reply to id %d within %gs" % (want_id, timeout)) from None
             if line is None:
                 self._lines.put(None)   # EOF stays visible to every later wait
-                raise RuntimeError("server closed stdout")
+                raise BackendExited("server closed stdout")
             try:
                 msg = json.loads(line)
             except ValueError:
@@ -610,6 +707,40 @@ class Backend:
     def _next(self) -> int:
         self._id += 1
         return self._id
+
+    def _failed(self, why: str) -> None:
+        """A started backend exited or stopped answering. The first failure schedules one
+        respawn after RESPAWN_BACKOFF; a second inside RESPAWN_WINDOW marks it DOWN for good."""
+        now = time.monotonic()
+        self._failures = [t for t in self._failures if now - t < RESPAWN_WINDOW] + [now]
+        self.stop()
+        if len(self._failures) >= 2:
+            self._respawn_due = None
+            self.status = "DOWN"
+            self.error = "%s; second failure within %gs, not restarted again" % (why, RESPAWN_WINDOW)
+            log("backend %s: DOWN -- %s" % (self.name, self.error))
+            return
+        wait = RESPAWN_BACKOFF[min(self.respawns, len(RESPAWN_BACKOFF) - 1)]
+        self._respawn_due = now + wait
+        log("backend %s: %s -- respawning in %gs" % (self.name, why, wait))
+
+    def _revive(self) -> None:
+        """Before a call: notice a process that died between calls, and run a scheduled
+        respawn (after its backoff), which re-sends the whole initialize handshake."""
+        if (self.status == "ok" and self._respawn_due is None
+                and self.proc is not None and self.proc.poll() is not None):
+            self._failed("process exited (code %s)" % self.proc.returncode)
+        if self._respawn_due is None:
+            return
+        _backoff_sleep(max(0.0, self._respawn_due - time.monotonic()))
+        self._respawn_due = None
+        self.respawns += 1
+        self.stats["backend_respawns"] = self.stats.get("backend_respawns", 0) + 1
+        self._lines = queue.Queue()
+        self.status, self.error = "respawning", ""
+        self.start()
+        if self.status != "ok":
+            self._failed("respawn failed: %s" % self.error)
 
     def start(self) -> None:
         if self.spec.get("url"):
@@ -681,7 +812,7 @@ class Backend:
                 return t
         return None
 
-    def call(self, tool: str, args: dict):
+    def _check_callable(self, tool: str) -> None:
         if self.status != "ok":
             raise RuntimeError(
                 "server %r is %s: %s. That is UNKNOWN, not 'the tool does not "
@@ -691,6 +822,9 @@ class Backend:
             raise RuntimeError(
                 "server %r has no tool %r. Available: %s"
                 % (self.name, tool, ", ".join(t.get("name", "?") for t in self.tools)))
+
+    def call(self, tool: str, args: dict):
+        self._check_callable(tool)
         # One deadline covers waiting for the lock AND the reply: a call that timed out
         # releases the lock, and a call queued behind it cannot wait longer than its own budget.
         deadline = time.monotonic() + CALL_TIMEOUT
@@ -698,10 +832,29 @@ class Backend:
             raise TimeoutError("server %r is still busy with an earlier call after %gs"
                                % (self.name, CALL_TIMEOUT))
         try:
-            i = self._next()
-            self._send({"jsonrpc": "2.0", "id": i, "method": "tools/call",
-                        "params": {"name": tool, "arguments": args or {}}})
-            return self._await(i, max(deadline - time.monotonic(), 0.001))
+            self._revive()
+            self._check_callable(tool)
+            request = {"jsonrpc": "2.0", "id": self._next(), "method": "tools/call",
+                       "params": {"name": tool, "arguments": args or {}}}
+            try:
+                self._send(request)
+            except OSError:
+                # The pipe was already closed: the call never reached the server, so
+                # sending it to the respawned one cannot run it twice.
+                self._failed("process exited")
+                self._revive()
+                self._check_callable(tool)
+                request["id"] = self._next()
+                self._send(request)
+            return self._await(request["id"], max(deadline - time.monotonic(), 0.001))
+        except TimeoutError:
+            self._failed("no reply within %gs" % CALL_TIMEOUT)
+            raise
+        except BackendExited:
+            self._failed("process exited during a call")
+            raise BackendExited("server %r exited during the call; nothing came back. It is %s."
+                                % (self.name, "DOWN" if self.status == "DOWN"
+                                   else "restarted before the next call")) from None
         finally:
             self._lock.release()
 
@@ -723,7 +876,7 @@ class Router:
                       "original_chars": 0, "final_chars": 0,
                       "schema_rejects": 0, "schema_coercions": 0,
                       "loop_warnings": 0, "loop_blocks": 0,
-                      "recalls": {}}
+                      "backend_respawns": 0, "recalls": {}}
         # Spill id -> the tool whose result it holds, and the ids already counted
         # as recalled. A shortened result the model keeps reading back is a result being
         # shortened too hard, and that is only visible if the two ends are joined up.
@@ -746,7 +899,7 @@ class Router:
         specs = servers if servers is not None else load_backends(self.config)
         threads = []
         for name, spec in specs.items():
-            b = Backend(name, spec)
+            b = Backend(name, spec, stats=self.stats)
             self.backends[name] = b
             t = threading.Thread(target=b.start, name="tg-start-" + name, daemon=True)
             t.start()
@@ -793,10 +946,11 @@ class Router:
             if b.status != "ok":
                 return ("%s: %s -- %s\nThis is UNKNOWN, not an empty tool list."
                         % (server, b.status, b.error))
-            listing = "\n".join("%s.%s: %s\n    args: %s" % (server, t.get("name"),
-                                                             short(t.get("description")),
-                                                             compact_args(t.get("inputSchema")))
-                                for t in b.tools)
+            listing = _within_budget(
+                ["%s.%s: %s\n    args: %s" % (server, t.get("name"), short(t.get("description")),
+                                              compact_args(t.get("inputSchema"))) for t in b.tools],
+                "\n", "\n[+%%d more tools not shown (TOOL_GUARDIAN_CATALOGUE_CHARS=%d): "
+                      "search_capabilities with a keyword and server %s finds them]" % (CATALOGUE_CHARS, server))
             # The next step goes in the RESULT, not only the tool description: a
             # description is read once, before the model has the catalogue; a
             # result is read at the moment the model decides what to do next.
@@ -808,8 +962,8 @@ class Router:
             if b.status != "ok":
                 out.append("[%s] %s: %s" % (name, b.status, b.error[:160]))
                 continue
-            out.append("[%s] %d tools: %s" % (name, len(b.tools),
-                       ", ".join(t.get("name", "?") for t in b.tools)))
+            out.append("[%s] %d tools: %s" % (name, len(b.tools), _within_budget(
+                [t.get("name", "?") for t in b.tools], ", ", ", +%d more")))
         if out:
             out.append("\nNEXT STEP: use search_capabilities with a keyword (or list_capabilities with one "
                        "server name) to see a tool's args, then call_tool.")
@@ -842,7 +996,7 @@ class Router:
                 continue
             for t in b.tools:
                 tname = str(t.get("name") or "")
-                low_desc = short(t.get("description")).lower()
+                low_desc = short(t.get("description"), RANK_DESC_WORDS).lower()
                 if tg_rank is not None:
                     score = tg_rank.score({"name": tname, "description": low_desc}, name, tokens,
                                           (b.spec or {}).get("hints"))
@@ -1059,8 +1213,11 @@ class Router:
                         "list_capabilities(server=\"%s\")"
                         % (b.name, args.get("tool"),
                            ", ".join(x.get("name", "?") for x in b.tools), b.name))
-            return (json.dumps(t, indent=2) + "\n\nNEXT STEP: use call_tool with server %s, tool %s, "
-                    "args: %s." % (b.name, t.get("name"), compact_args(t.get("inputSchema"))))
+            nxt = ("\n\nNEXT STEP: use call_tool with server %s, tool %s, args: %s."
+                   % (b.name, t.get("name"), compact_args(t.get("inputSchema"))))
+            if str(args.get("detail") or DESCRIBE_DETAIL).lower() == "full":
+                return json.dumps(t, indent=2) + nxt
+            return describe_compact(b.name, t) + nxt
         if name == "call_tool":
             if not str(args.get("server") or "") and args.get("tool"):
                 found_at = self._resolve_server(str(args.get("tool")))
@@ -1118,10 +1275,12 @@ class Router:
                 res = b.call(tool, sent)
             except TimeoutError as exc:
                 self._last_meta = {"is_error": True, "rule": "call_timeout"}
+                state = ("it is now DOWN after a second failure" if b.status == "DOWN"
+                         else "it was stopped and is restarted before the next call")
                 return ("[tool-guardian: %s.%s did not answer within %gs (TOOL_GUARDIAN_CALL_TIMEOUT): %s. "
-                        "The server may still be working on it; nothing came back.]\n\nNEXT STEP: try "
+                        "Nothing came back; %s.]\n\nNEXT STEP: try "
                         "once more, or tell the user that %s is not responding."
-                        % (b.name, tool, CALL_TIMEOUT, exc, b.name))
+                        % (b.name, tool, CALL_TIMEOUT, exc, state, b.name))
             if RAW_RESULTS:
                 return json.dumps(res, indent=2)[:LEGACY_CAP]
             text, is_error = render_result(res)
@@ -1274,10 +1433,11 @@ def build_router_tools(backends: dict) -> list:
              "limit": {"type": "integer", "description": "max results, default 8"}},
              "required": ["query"]}},
         {"name": "describe_tool",
-         "description": ("Get the full argument schema for one tool. Call after "
-                         "list_capabilities and before call_tool if unsure of args."),
+         "description": ("Get the arguments for one tool (detail=full: whole schema). Call "
+                         "after list_capabilities and before call_tool if unsure of args."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string"}, "tool": {"type": "string"}},
+             "server": {"type": "string"}, "tool": {"type": "string"},
+             "detail": {"enum": ["compact", "full"]}},
              "required": ["server", "tool"]}},
         {"name": "call_tool",
          "description": ("Invoke a tool on a server. THIS IS THE STEP THAT ANSWERS "
@@ -1380,8 +1540,10 @@ def selftest(config: str = "") -> int:
     print(r.catalogue())
     ok = [b for b in r.backends.values() if b.status == "ok"]
     bad = [b for b in r.backends.values() if b.status != "ok"]
-    router_cost = est_tokens(ROUTER_TOOLS)
-    full_cost = sum(est_tokens(b.tools) for b in ok)
+    count, method = token_counter()
+    router_cost = count(ROUTER_TOOLS)
+    full_cost = sum(count(b.tools) for b in ok)
+    print("\ntoken counts: %s" % method)
     print("\nrouter tools cost ~%d tokens vs ~%d for the full set behind them"
           % (router_cost, full_cost))
     if full_cost > router_cost:
@@ -1394,7 +1556,7 @@ def selftest(config: str = "") -> int:
     print("\n%d backend(s) up, %d tools reachable."
           % (len(ok), sum(len(b.tools) for b in ok)))
     for b in sorted(ok, key=lambda x: x.name):
-        print("[%s] %d tools, ~%d tokens" % (b.name, len(b.tools), est_tokens(b.tools)))
+        print("[%s] %d tools, ~%d tokens" % (b.name, len(b.tools), count(b.tools)))
     for b in bad:
         print("  %s: %s -- %s" % (b.name, b.status, b.error[:100]))
     print("\nNOTE: this measures the token SAVING and that backends start. It does"
@@ -1438,12 +1600,14 @@ def bypass_summary(session: str = "", since_hours: float = 24.0, log_path: str =
     return "call log: %s\n%s" % (path, tg_state.render_bypass_summary(summary))
 
 
-def hook_pretooluse(stdin_text: str, mode: str = "") -> tuple:
-    """Claude Code PreToolUse hook. Never fails the user's shell call: any problem is exit 0."""
+def hook_pretooluse(stdin_text: str, mode: str = "", rules: str = "") -> tuple:
+    """Claude Code PreToolUse hook. Never fails the user's shell call: any problem is exit 0.
+    `rules`: an optional JSON allow/deny file, applied before the default behaviour."""
     if tg_state is None:
         return 0, ""
     mode = mode or os.environ.get("TOOL_GUARDIAN_HOOK_MODE", "log")
-    return tg_state.run_hook(stdin_text, log_path=CALL_LOG, mode=mode)
+    return tg_state.run_hook(stdin_text, log_path=CALL_LOG, mode=mode,
+                             policy=tg_state.load_hook_policy(rules))
 
 
 def main(argv=None) -> int:
@@ -1453,6 +1617,8 @@ def main(argv=None) -> int:
     ap.add_argument("--selftest", action="store_true",
                     help="start backends, print the token saving, exit")
     ap.add_argument("--version", action="store_true")
+    ap.add_argument("--prove", action="store_true",
+                    help="run three bundled prompts against $TOOL_GUARDIAN_PROVE_URL; PASS/FAIL each")
     ap.add_argument("--bypass-summary", dest="bypass_summary", action="store_true",
                     help="router calls vs shell bypasses from the call log, then exit")
     ap.add_argument("--session", default="",
@@ -1463,6 +1629,8 @@ def main(argv=None) -> int:
                     help="Claude Code PreToolUse hook: read the hook JSON on stdin, log a bypass")
     ap.add_argument("--mode", default="", choices=["", "log", "deny"],
                     help="with --hook-pretooluse: log (default) or deny ($TOOL_GUARDIAN_HOOK_MODE)")
+    ap.add_argument("--rules", default="",
+                    help="with --hook-pretooluse: JSON allow/deny rules file, applied first")
     ap.add_argument("--skills-report", dest="skills_report", action="store_true",
                     help="print the token saving for skills configured in "
                          "TOOL_GUARDIAN_SKILLS and exit")
@@ -1470,7 +1638,7 @@ def main(argv=None) -> int:
     if a.hook:
         # First, and before .env loading: a hook runs on every shell call and must stay fast.
         try:
-            code, out = hook_pretooluse(sys.stdin.read(), a.mode)
+            code, out = hook_pretooluse(sys.stdin.read(), a.mode, a.rules)
         except Exception:  # noqa: BLE001  (never break the user's shell)
             code, out = 0, ""
         if out:
@@ -1496,6 +1664,11 @@ def main(argv=None) -> int:
         read_tunables()
     if a.selftest:
         return selftest(a.config)
+    if a.prove:
+        if tg_prove is None:
+            print("--prove unavailable: tg_prove.py is not beside tool_guardian.py")
+            return 2
+        return tg_prove.prove(sys.modules[__name__])
     r = Router(a.config)
     r.start()
     global ROUTER_TOOLS

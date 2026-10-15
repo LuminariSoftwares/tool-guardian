@@ -1,6 +1,6 @@
 <h1 align="center">Tool Guardian</h1>
 
-<p align="center"><b>Seven MCP servers for 934 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
+<p align="center"><b>Seven MCP servers for 951 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
 
 <p align="center">For local models served by Ollama, LM Studio, vLLM or llama.cpp: the router never talks to the model backend, so any of them works when your client's model calls tools.</p>
 
@@ -36,7 +36,7 @@ Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-gua
 
 | | Without Tool Guardian | With it |
 |---|---|---|
-| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **934 tokens** (3 %); a schema is fetched only when the model asks |
+| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **951 tokens** (3 %); a schema is fetched only when the model asks |
 | A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
 | DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
 | A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
@@ -113,7 +113,7 @@ You have two ways to deal with that today, and both cost you something:
 | Load fewer MCP servers | You lose the capability entirely |
 | Live with it | Two-thirds of the window is gone before you type |
 
-Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just four small tools plus a one-line catalogue of server names (934 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
+Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just four small tools plus a one-line catalogue of server names (951 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
 
 ```
 list_capabilities(server?)      one line per tool — names and purpose
@@ -259,6 +259,19 @@ launches it.
       2. myproject/config/.env        -> not found
       3. myproject/.env               -> FOUND  (stops here)
 
+- **Small-window preset.** `TOOL_GUARDIAN_PRESET=small` is for 8k-context local
+  models. It sets exactly two values:
+
+  | setting | default | `small` | what it does |
+  |---|--:|--:|---|
+  | `TOOL_GUARDIAN_CATALOGUE_CHARS` | 0 (no cap) | 1500 | each server's block in `list_capabilities` is cut at this many characters, with a `[+N more tools not shown ...]` line pointing at `search_capabilities` |
+  | `TOOL_GUARDIAN_DESC_WORDS` | 12 | 6 | words of a tool, server or skill description shown in catalogue and search lines |
+
+  Set either variable to override the preset. Search ranking still scores 12
+  description words, the output ladder and every other setting are unchanged, and
+  `describe_tool` is compact in both. On the seven bench catalogues the seven
+  per-server listings total 9,582 characters with `small` against 16,274 without.
+
 - **Variable expansion.** `${VAR}`, `$VAR` and `%VAR%` are expanded in each
   backend's `args` from the environment; unknown variables are left as-is.
   Keep a secret in `.env` and reference it in a backend arg:
@@ -283,6 +296,13 @@ Point your MCP client at Tool Guardian as a single stdio server:
 
 Everything your servers can do is still reachable — the model just discovers it in two steps (`list_capabilities` → `call_tool`) instead of paying for all of it up front.
 
+### A backend that exits or stops answering
+
+When a backend's process exits, or a call gets no reply within `TOOL_GUARDIAN_CALL_TIMEOUT`, the router stops it and
+starts it again before the next call: after 1 s the first time, 5 s on any later respawn, re-sending the `initialize`
+handshake. A second failure within 60 s marks the backend `DOWN` and it is not restarted again. The count is
+`backend_respawns` in the bridge's `stats` and the `backend respawns: N since load` line of `/toolguardian`.
+
 ## See what it saves
 
 ```bash
@@ -290,6 +310,16 @@ tool-guardian --selftest
 ```
 
 Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. *"router tools cost ~310 tokens vs ~28,700 for the full set behind them → ~28,390 freed on every request."* Below the totals it prints one `[server] N tools, ~M tokens` line per server, and it exits non-zero if any configured server failed to start. It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
+
+Token counts use `tiktoken` (cl100k_base) when it is importable and the characters ÷ 3.5 estimate otherwise; the report prints which, e.g. `token counts: estimate (chars / 3.5; tiktoken not available)`. `pip install tiktoken` switches it; nothing else needs it.
+
+### Prove your model drives the router
+
+```bash
+TOOL_GUARDIAN_PROVE_URL=http://127.0.0.1:11434/v1 tool-guardian --prove
+```
+
+Sends three bundled prompts to an OpenAI-compatible chat endpoint with the router tools attached, runs the model's tool calls through a real router in front of a bundled stub server, and prints one `PASS`/`FAIL` line per prompt with the prompt and completion tokens the endpoint reported: `list_describe` (list or search, then `describe_tool`), `nested_call` (`call_tool` with a nested filter), `stalled` (the model must reach `call_tool`, not only search). Exit 0 when all pass, 1 on any `FAIL`, 2 when `TOOL_GUARDIAN_PROVE_URL` is not set. Optional: `TOOL_GUARDIAN_PROVE_MODEL` (default: the first id from `GET <url>/models`), `TOOL_GUARDIAN_PROVE_KEY` (bearer token). The servers in your `mcp.json` are not started, and nothing is written to the call log or `state.json`.
 
 Under DSH, type **`/toolguardian`** in a session for the same report from the running plugin: each server's status and tool count, the tokens freed on every request, active groups, ladder and bypass counters, and the update line.
 
@@ -334,7 +364,7 @@ Reproduce it yourself: `python bench/bench_tokens.py` (no network, no model; `--
 | sequential-thinking | 1 | 1,185 |
 | **all seven** | **95** | **20,005** |
 
-**Every request:** 20,005 tokens of tool schemas without tool-guardian, 934 with it (**95.3 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 3 % full.
+**Every request:** 20,005 tokens of tool schemas without tool-guardian, 951 with it (**95.2 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 3 % full.
 
 The output ladder on four typical tool results:
 
@@ -386,6 +416,18 @@ same failing call repeated until the context runs out. The router now sits in fr
 Finding a tool is cheaper too: `search_capabilities(query)` returns the few matching `server.tool: description`
 lines instead of a whole catalogue. Switches: `TG_VALIDATE_ARGS=0`, `TG_LOOP_GUARD=0`.
 
+### Nested arguments
+
+The checks above walk nested objects and array items too (required keys, types, enum values, closed objects), and a
+problem names its full path: `argument 'params.filters[2].op' must be one of: eq, lt, gt`.
+
+### `describe_tool` detail
+
+`describe_tool(server, tool)` returns the compact form by default: `server.tool: one-line description`, a
+`required args:` line, and the NEXT STEP line listing every argument (`?` = optional). `detail="full"` returns the
+whole tool definition as before. On the seven bench catalogues (95 tools) compact is 25,161 characters against
+131,080 for full, 80.8 % shorter. `TOOL_GUARDIAN_DESCRIBE_DETAIL=full` makes full the default.
+
 ## Native DeepSeek Harness (DSH) bundle
 
 The same repo is an installable DSH bundle, `dsh-tool-guardian`. The Python router is unchanged — the bundle is a bridge to it, not a rewrite, and the MCP server above keeps working.
@@ -419,6 +461,25 @@ For real bypass detection in **Claude Code**, add its `PreToolUse` hook, which m
 ```
 
 `--mode deny` / `TOOL_GUARDIAN_HOOK_MODE=deny` blocks the call and tells Claude which `call_tool(...)` to use. The hook is tested against Claude Code's documented `PreToolUse` payload and against a payload captured from a live Claude Code 2.1.296 session, where deny mode blocked the call (see [Works with](#works-with)); [`examples/claude-code/settings.json`](examples/claude-code/settings.json) is the same block. Other clients without a pre-tool hook get the two server-side signals only.
+
+### Hook rules file
+
+```bash
+tool-guardian --hook-pretooluse --rules ~/.tool-guardian/hook-rules.json
+```
+
+```json
+{"deny":  [{"tool": "Bash", "args": {"command": "\\brm\\s+-rf\\b"}, "reason": "no recursive deletes"},
+           {"tool": "WebFetch"}],
+ "allow": [{"tool": "Bash", "args": {"command": "^git (status|log|diff)"}}]}
+```
+
+Rules run before the default behaviour. `tool` is a regex matched against the whole tool name; each `args` key is a
+regex searched in that `tool_input` field; every listed key must match. Deny rules are checked first and win: the
+call is blocked with `reason` (or a default naming the rule). An allow match skips tool-guardian's own check and lets
+the call go on to Claude Code's normal permission flow; it approves nothing. No match, no file, or an unreadable file:
+the default behaviour, unchanged. The hook only sees the tools its `matcher` sends it, so widen the matcher (e.g.
+`Bash|PowerShell|WebFetch`) for rules on other tools.
 
 ## Compatibility
 

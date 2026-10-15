@@ -317,6 +317,14 @@ export function ladderLine(enabled, stats = {}) {
 }
 
 /**
+ * The /toolguardian respawn line: how many times the router restarted a backend that
+ * exited or stopped answering (a second failure within 60 s marks it DOWN instead).
+ */
+export function respawnLine(stats = {}) {
+  return `backend respawns: ${counter((stats ?? {}).backend_respawns)} since load`
+}
+
+/**
  * The /toolguardian recall line: per tool, how many of the results the output ladder
  * shortened and archived the model then read back with retrieve_spill. A tool high on
  * this list is being shortened too hard -- the model keeps paying to undo the saving.
@@ -1062,6 +1070,7 @@ export function apply(ctx, config) {
       const stats = await live.request('stats', {}, 10000)
       lines.push(ladderLine(options.ladder.enabled, stats))
       lines.push(callChecksLine(stats, loopGuard.stats))
+      lines.push(respawnLine(stats))
       const r = recallLine(stats.recalls)
       if (r !== '') lines.push(r)
     } catch { /* counters are a courtesy */ }

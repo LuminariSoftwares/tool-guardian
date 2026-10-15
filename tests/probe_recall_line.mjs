@@ -23,5 +23,11 @@ if (typeof L === 'function') {
   check('ladder_line_missing_counts_are_zero',
     L(false, {}) === 'output ladder: off -- 0 results shaped, 0 archived, 0 archive failures, 0 -> 0 chars since load')
 }
+const R = plugin.respawnLine
+check('respawn_line_exported', typeof R === 'function')
+if (typeof R === 'function') {
+  check('respawn_line_counts', R({ backend_respawns: 2 }) === 'backend respawns: 2 since load')
+  check('respawn_line_missing_is_zero', R({}) === 'backend respawns: 0 since load' && R(undefined) === 'backend respawns: 0 since load')
+}
 console.log(`probe_recall_line: ${total} checks, ${pass} passed, ${total - pass} failed`)
 process.exit(pass === total && total > 0 ? 0 : 1)
