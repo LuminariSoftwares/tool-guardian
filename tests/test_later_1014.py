@@ -382,7 +382,8 @@ def test_selftest_uses_tiktoken_when_importable(tmp_path, capsys, monkeypatch):
     monkeypatch.setitem(sys.modules, "tiktoken", fake)
     code, out = _selftest_out(tmp_path, capsys)
     assert code == 0 and "token counts: tiktoken cl100k_base" in out, out
-    expected = len(json.dumps(tg.ROUTER_TOOLS, ensure_ascii=False)) // 2
+    bare = [{k: v for k, v in t.items() if k not in ("title", "annotations")} for t in tg.ROUTER_TOOLS]
+    expected = len(json.dumps(bare, ensure_ascii=False)) // 2   # annotations are not model tokens
     assert "router tools cost ~%d tokens" % expected in out, out
 
 
@@ -390,7 +391,7 @@ def test_selftest_falls_back_to_the_estimate_without_tiktoken(tmp_path, capsys, 
     monkeypatch.setitem(sys.modules, "tiktoken", None)          # import tiktoken -> ImportError
     code, out = _selftest_out(tmp_path, capsys)
     assert code == 0 and "token counts: estimate (chars / 3.5; tiktoken not available)" in out, out
-    assert "router tools cost ~%d tokens" % tg.est_tokens(tg.ROUTER_TOOLS) in out, out
+    assert "router tools cost ~%d tokens" % tg.model_cost(tg.ROUTER_TOOLS) in out, out
 
 
 # ---- 7. TOOL_GUARDIAN_PRESET=small --------------------------------------------------

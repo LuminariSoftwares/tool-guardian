@@ -160,7 +160,7 @@ class Bridge:
         groups = tg.tg_groups.build_groups(router.servers_tools(),
                                            router.options.get("groups") or None,
                                            tg.CHARS_PER_TOKEN)
-        cost = tg.est_tokens(tg.ROUTER_TOOLS)
+        cost = tg.model_cost(tg.ROUTER_TOOLS)
         return {"groups": groups, "router_cost": cost,
                 "text": tg.tg_groups.render(groups, cost)}
 

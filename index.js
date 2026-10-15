@@ -521,6 +521,17 @@ const TEXT_OUTPUT = {
 }
 
 /** DeepSeek function names: [A-Za-z0-9_-], at most 64 chars. */
+/**
+ * MCP tool annotations for the tools only this bundle registers. The router tools take theirs
+ * from the Python router's spec. A direct tg__ tool runs one backend tool, which the router
+ * cannot vouch for, so it gets call_tool's conservative hints.
+ */
+export const BACKEND_TOOL_HINTS = Object.freeze({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true })
+// Group tools change this session's tool set and record the activation; they delete nothing
+// and activating an active group changes nothing.
+const GROUP_TOOL_HINTS = Object.freeze({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false })
+const withTitle = (title, hints) => ({ title, annotations: { title, ...hints } })
+
 export function directToolName(server, tool) {
   return `tg__${server}__${tool}`.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64)
 }
@@ -682,6 +693,7 @@ export function apply(ctx, config) {
   /** One router tool, schema and description straight from the Python router. */
   const routerTool = spec => ({
     name: spec.name,
+    ...(spec.annotations ? { title: spec.title, annotations: { ...spec.annotations } } : {}),
     description: spec.description,
     parameters: spec.inputSchema ?? { type: 'object', properties: {} },
     output: TEXT_OUTPUT,
@@ -705,6 +717,7 @@ export function apply(ctx, config) {
       cost += Math.ceil(JSON.stringify(tool).length / 3.5)
       register({
         name,
+        ...withTitle(`${tool.server}.${tool.tool}`, BACKEND_TOOL_HINTS),
         description: `[${tool.server}] ${tool.description}`.slice(0, 1024),
         parameters: tool.inputSchema,
         output: TEXT_OUTPUT,
@@ -725,6 +738,7 @@ export function apply(ctx, config) {
 
   const activateGroupDefinition = hiddenNote => ({
     name: 'activate_group',
+    ...withTitle('Activate a tool group', GROUP_TOOL_HINTS),
     description: 'Load ONE tool group as direct tools (its schemas then ride every request -- '
       + `call list_groups_with_costs first and load only the group the task needs).${hiddenNote}`,
     parameters: {
@@ -818,6 +832,7 @@ export function apply(ctx, config) {
 
   const restoreGroupsDefinition = () => ({
     name: 'restore_groups',
+    ...withTitle('Restore last session\'s groups', GROUP_TOOL_HINTS),
     description: 'Load the tool groups the PREVIOUS session activated (list_groups_with_costs shows them and their cost). '
       + 'Optional: call it only when this task needs the same tools.',
     parameters: { type: 'object', properties: {} },
