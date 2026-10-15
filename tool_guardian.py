@@ -351,12 +351,13 @@ def build_skill_tools(skills):
                          "THESE SKILLS ARE AVAILABLE AND YOU SHOULD USE THEM RATHER THAN "
                          "GUESSING OR WORKING AROUND THEM: " + catalogue + ". "
                          "If a request concerns any of those, call this FIRST to "
-                         "find the right skill, then read_skill."),
+                         "find the right skill, then read_skill. Returns one line per skill."),
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "read_skill",
          "description": ("Get the full text of one skill. "
-                         "Call after list_skills if unsure which skill to use."),
-         "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}},
+                         "Call after list_skills if unsure which skill to use. Returns the SKILL.md text."),
+         "inputSchema": {"type": "object", "properties": {"name": {"type": "string", "description": (
+             "Skill name as list_skills shows it, e.g. \"demo\"; never a path.")}},
                          "required": ["name"]}},
     ]
 
@@ -1420,33 +1421,39 @@ def build_router_tools(backends: dict) -> list:
                          "GUESSING OR WORKING AROUND THEM: " + catalogue + ". "
                          "If a request concerns any of those, call this FIRST to "
                          "find the right tool, then call_tool. To find a tool by "
-                         "keyword instead, call search_capabilities(query)."),
+                         "keyword instead, call search_capabilities(query). Returns tool names with "
+                         "one-line summaries; describe_tool gives the arguments."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string", "description": "server name, or omit for all"}}}},
+             "server": {"type": "string", "description": "Server name from the catalogue, e.g. \"git\"; omit for all."}}}},
         {"name": "search_capabilities",
          "description": ("Find a tool by keyword across every connected server. "
                          "Cheaper than listing them all when you know roughly what "
-                         "you are looking for."),
+                         "you are looking for. Returns matching tools, best first."),
          "inputSchema": {"type": "object", "properties": {
-             "query": {"type": "string"},
-             "server": {"type": "string", "description": "optional: search one server only"},
-             "limit": {"type": "integer", "description": "max results, default 8"}},
+             "query": {"type": "string", "description": "Keywords, e.g. \"create issue\"; not a regex."},
+             "server": {"type": "string", "description": "Optional: search one server only, e.g. \"git\"."},
+             "limit": {"type": "integer", "description": "Maximum results to return; default 8."}},
              "required": ["query"]}},
         {"name": "describe_tool",
          "description": ("Get the arguments for one tool (detail=full: whole schema). Call "
-                         "after list_capabilities and before call_tool if unsure of args."),
+                         "after list_capabilities and before call_tool if unsure of args. Returns the "
+                         "arguments and which are required."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string"}, "tool": {"type": "string"},
-             "detail": {"enum": ["compact", "full"]}},
+             "server": {"type": "string", "description": "Server name, e.g. \"git\"."},
+             "tool": {"type": "string", "description": "Tool name on that server, e.g. \"git_status\"."},
+             "detail": {"enum": ["compact", "full"], "description": "full returns the whole JSON schema."}},
              "required": ["server", "tool"]}},
         {"name": "call_tool",
          "description": ("Invoke a tool on a server. THIS IS THE STEP THAT ANSWERS "
                          "THE USER -- list_capabilities only finds the name. `args` "
                          "may be an object or a JSON string; omit it for tools that "
-                         "take no arguments."),
+                         "take no arguments. Returns the backend tool's result as text (large ones are "
+                         "shortened; retrieve_spill reads the rest). Can write or delete, as the "
+                         "backend tool does."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string"}, "tool": {"type": "string"},
-             "args": {"description": "the tool's arguments -- object or JSON string"}},
+             "server": {"type": "string", "description": "Server name, e.g. \"git\"."},
+             "tool": {"type": "string", "description": "Tool name on that server, e.g. \"git_status\"."},
+             "args": {"description": "The tool's arguments: an object like {\"path\": \"/tmp\"} or a JSON string."}},
              "required": ["server", "tool"]}},
     ]
 
@@ -1457,16 +1464,17 @@ def build_extra_tools() -> list:
     if tg_groups is not None:
         extra.append({"name": "list_groups_with_costs",
                       "description": ("List tool GROUPS with the context-token cost of loading each, "
-                                      "so you can pick only the group a task needs."),
+                                      "so you can pick only the group a task needs. Returns one line per group."),
                       "inputSchema": {"type": "object", "properties": {}}})
     if tg_spill is not None and tg_ladder is not None and LADDER_ON:
         extra.append({"name": "retrieve_spill",
                       "description": ("Read back the FULL original of a result that was shortened. "
-                                      "Use the id from the [tool-guardian: ...] notice."),
+                                      "Use the id from the [tool-guardian: ...] notice. Returns the archived text."),
                       "inputSchema": {"type": "object", "properties": {
-                          "id": {"type": "string", "description": "sp_ + 12 hex, from the notice"},
+                          "id": {"type": "string", "description": "sp_ + 12 hex from the notice, e.g. sp_0123456789ab"},
                           "grep": {"type": "string", "description": "regex; returns matching lines"},
-                          "start_line": {"type": "integer"}, "max_lines": {"type": "integer"}},
+                          "start_line": {"type": "integer", "description": "first line, from 1; default 1"},
+                          "max_lines": {"type": "integer", "description": "line limit; default 400"}},
                           "required": ["id"]}})
     return extra
 

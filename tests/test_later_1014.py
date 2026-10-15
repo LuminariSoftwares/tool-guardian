@@ -170,7 +170,7 @@ def test_describe_tool_full_is_the_old_output():
 
 def test_describe_tool_advertises_detail():
     schema = {t["name"]: t for t in tg.build_router_tools({})}["describe_tool"]["inputSchema"]
-    assert schema["properties"]["detail"] == {"enum": ["compact", "full"]}
+    assert schema["properties"]["detail"]["enum"] == ["compact", "full"]
     assert schema["required"] == ["server", "tool"]
 
 
