@@ -1,6 +1,6 @@
 <h1 align="center">Tool Guardian</h1>
 
-<p align="center"><b>Seven MCP servers for 951 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
+<p align="center"><b>Seven MCP servers for 1,209 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
 
 <p align="center">For local models served by Ollama, LM Studio, vLLM or llama.cpp: the router never talks to the model backend, so any of them works when your client's model calls tools.</p>
 
@@ -32,13 +32,13 @@ mcp-name: io.github.LuminariSoftwares/tool-guardian
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-An MCP server that sits in front of your other MCP servers and exposes **four small generic tools** (list, search, describe, call) instead of dozens of specific ones — discovering the rest **on demand** — so tool definitions stop eating your context window before the model reads a word.
+An MCP server that sits in front of your other MCP servers and exposes **6 router tools** (8 with [skills](#skills)) instead of dozens of specific ones: four generic ones to list, search, describe and call the tools behind it, plus two for tool-group costs and archived results (see [Tools](#tools)) — discovering the rest **on demand** — so tool definitions stop eating your context window before the model reads a word.
 
 Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-guardian): **Context Guardian compacts the conversation before the window fills; Tool Guardian keeps the tools from filling it in the first place.** Two halves of the same problem.
 
 | | Without Tool Guardian | With it |
 |---|---|---|
-| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **951 tokens** (3 %); a schema is fetched only when the model asks |
+| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,209 tokens** (4 %); a schema is fetched only when the model asks |
 | A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
 | DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
 | A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
@@ -115,7 +115,7 @@ You have two ways to deal with that today, and both cost you something:
 | Load fewer MCP servers | You lose the capability entirely |
 | Live with it | Two-thirds of the window is gone before you type |
 
-Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just four small tools plus a one-line catalogue of server names (951 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
+Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just a handful of small tools plus a one-line catalogue of server names (1,209 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
 
 ```
 list_capabilities(server?)      one line per tool — names and purpose
@@ -153,13 +153,30 @@ It is one repo and one Python router. Pick the front door that matches your harn
 
 ```mermaid
 flowchart LR
-    A["Your agent<br/>(Claude Code, DSH, any MCP client)"] -->|"6 tools, ~930 tokens for 7 servers"| B["Tool Guardian"]
+    A["Your agent<br/>(Claude Code, DSH, any MCP client)"] -->|"6 tools, ~1,200 tokens for 7 servers"| B["Tool Guardian"]
     B -->|"on demand"| C["filesystem"]
     B -->|"on demand"| D["git"]
     B -->|"on demand"| E["n8n, database, ..."]
     B -. "big result" .-> F[("archive<br/>retrieve_spill")]
     B -->|"shaped result"| A
 ```
+
+## Tools
+
+The router exposes these tools. The first four are always there; `list_groups_with_costs` and `retrieve_spill` (while the output ladder is on) are the other two of the 6 router tools; the two skill tools appear only when a skill folder is configured.
+
+| tool | arguments | what it does |
+|---|---|---|
+| `list_capabilities` | `server` (optional) | tool names with one-line summaries for one server, or all; start here |
+| `search_capabilities` | `query`, `server` and `limit` (optional) | find a tool by keyword across servers |
+| `describe_tool` | `server`, `tool`, `detail` (optional) | the arguments of one tool (`detail=full`: its whole schema) |
+| `call_tool` | `server`, `tool`, `args` (optional) | run a backend tool and return its (shaped) result; this is the step that answers the user |
+| `list_groups_with_costs` | none | tool groups and the context-token cost of loading each |
+| `retrieve_spill` | `id`, `grep`, `start_line`, `max_lines` (optional) | read back the full original of a shortened result |
+| `list_skills` | none | one line per skill (only with `TOOL_GUARDIAN_SKILLS`) |
+| `read_skill` | `name` | the full text of one skill (only with `TOOL_GUARDIAN_SKILLS`) |
+
+All but `call_tool` only report; `call_tool` does whatever the backend tool does.
 
 ## Where it sits
 
@@ -180,6 +197,8 @@ pip install tool-guardian
 Pure standard library — nothing else to install.
 
 > PyPI and npm now ship the same code: `pip install tool-guardian` (0.3.0+) for the MCP server, `dsh-tool-guardian` on npm for DSH.
+
+Which install is which: the Python package `tool-guardian` **0.7.0** is the MCP server (`pip install tool-guardian`, or `uvx tool-guardian`); the npm package `dsh-tool-guardian` **0.7.0-beta.1** is the DeepSeek Harness bundle. They are versioned separately.
 
 ## Configure
 
@@ -298,6 +317,19 @@ Point your MCP client at Tool Guardian as a single stdio server:
 }
 ```
 
+Claude Desktop (`claude_desktop_config.json`) without installing anything first, using [uv](https://docs.astral.sh/uv/):
+
+```json
+{
+  "mcpServers": {
+    "tool-guardian": {
+      "command": "uvx",
+      "args": ["tool-guardian", "--config", "/path/to/your/mcp.json"]
+    }
+  }
+}
+```
+
 Everything your servers can do is still reachable — the model just discovers it in two steps (`list_capabilities` → `call_tool`) instead of paying for all of it up front.
 
 ### A backend that exits or stops answering
@@ -368,7 +400,7 @@ Reproduce it yourself: `python bench/bench_tokens.py` (no network, no model; `--
 | sequential-thinking | 1 | 1,185 |
 | **all seven** | **95** | **20,005** |
 
-**Every request:** 20,005 tokens of tool schemas without tool-guardian, 951 with it (**95.2 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 3 % full.
+**Every request:** 20,005 tokens of tool schemas without tool-guardian, 1,209 with it (**94.0 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 4 % full.
 
 The output ladder on four typical tool results:
 
