@@ -110,6 +110,16 @@ check('backend_reported', logs.some(l => l.includes('stub=ok(2)')))
 const names = [...registered.keys()]
 check('router_tools_registered_after_backends', ['list_capabilities', 'describe_tool', 'call_tool', 'list_groups_with_costs', 'retrieve_spill', 'activate_group'].every(n => names.includes(n)))
 check('backend_tools_are_NOT_registered_until_a_group_is_active', !names.some(n => n.startsWith('tg__')))
+const HINTS = ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint']
+const annotated = d => typeof d.title === 'string' && d.title !== '' && d.annotations?.title === d.title
+  && HINTS.every(h => typeof d.annotations?.[h] === 'boolean')
+check('every_tool_carries_title_and_four_boolean_hints', [...registered.values()].every(annotated))
+const ann = n => registered.get(n)?.annotations ?? {}
+check('router_tools_carry_the_python_annotations', ann('list_capabilities').readOnlyHint === true && ann('list_capabilities').destructiveHint === false
+  && ann('call_tool').destructiveHint === true && ann('call_tool').openWorldHint === true && ann('call_tool').readOnlyHint === false)
+check('activate_group_changes_the_session_but_deletes_nothing', ann('activate_group').readOnlyHint === false && ann('activate_group').destructiveHint === false
+  && ann('activate_group').idempotentHint === true && ann('activate_group').openWorldHint === false
+  && registered.has('restore_groups') && HINTS.every(h => ann('restore_groups')[h] === ann('activate_group')[h]))
 check('definitions_have_the_registry_shape', [...registered.values()].every(d => typeof d.execute === 'function' && typeof d.output?.render === 'function' && d.output.schema.type === 'string' && d.parameters?.type === 'object'))
 
 const callTool = registered.get('call_tool')
@@ -182,6 +192,9 @@ check('disposed_agent_mask_is_lifted', agentTools.disposed === 2)
 const act = await registered.get('activate_group').execute({ group: 'stub' })
 check('activate_group_registers_direct_tools_and_quotes_cost', registered.has('tg__stub__echo') && registered.has('tg__stub__stub_render_video') && /~\d+ tokens added/.test(act))
 const direct = await registered.get('tg__stub__echo').execute({ text: 'yo' })
+check('direct_tools_carry_call_tool_annotations', annotated(registered.get('tg__stub__echo')) && ann('tg__stub__echo').destructiveHint === true
+  && ann('tg__stub__echo').title === 'stub.echo'
+  && HINTS.every(h => ann('tg__stub__echo')[h] === ann('call_tool')[h]))
 check('direct_tool_routes_through_the_router', direct.startsWith('echo: yo'))
 const unknown = await registered.get('activate_group').execute({ group: 'nope' })
 check('unknown_group_is_a_result_with_next_step_not_a_throw', unknown.includes('activate_group failed') && unknown.includes('NEXT STEP: list_groups_with_costs()'))

@@ -1325,7 +1325,7 @@ class Router:
                 return "groups are unavailable: tg_groups.py is not beside tool_guardian.py"
             groups = tg_groups.build_groups(self.servers_tools(), self.options.get("groups") or None,
                                             CHARS_PER_TOKEN)
-            text = tg_groups.render(groups, est_tokens(ROUTER_TOOLS))
+            text = tg_groups.render(groups, model_cost(ROUTER_TOOLS))
             if not self.native_groups:
                 # activate_group exists only under the DSH plugin; do not name a tool this path lacks.
                 lines = text.splitlines()
@@ -1474,6 +1474,40 @@ def build_extra_tools() -> list:
 ROUTER_TOOLS = []  # filled at startup by build_router_tools + build_skill_tools
 
 
+# MCP tool annotations: a title and the four hints for every tool this server exposes.
+# Everything but call_tool only reports: the catalogue, a schema, group costs, an archived
+# result or a skill file, all already in memory or on local disk. call_tool runs whatever the
+# backend tool does, so it gets the conservative values -- it can write, delete and reach the
+# network, and running it twice can do the work twice.
+_REPORTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+TOOL_ANNOTATIONS = {
+    "list_capabilities": dict(_REPORTS, title="List server tools"),
+    "search_capabilities": dict(_REPORTS, title="Search tools"),
+    "describe_tool": dict(_REPORTS, title="Describe a tool"),
+    "call_tool": {"title": "Call a backend tool", "readOnlyHint": False, "destructiveHint": True,
+                  "idempotentHint": False, "openWorldHint": True},
+    "list_groups_with_costs": dict(_REPORTS, title="List tool groups and costs"),
+    "retrieve_spill": dict(_REPORTS, title="Read an archived result"),
+    "list_skills": dict(_REPORTS, title="List skills"),
+    "read_skill": dict(_REPORTS, title="Read a skill"),
+}
+
+
+def annotate(tool: dict) -> dict:
+    """The tool with its MCP `title` and `annotations` (title repeated inside, for clients
+    on the 2025-03-26 spec, which had no top-level title)."""
+    ann = TOOL_ANNOTATIONS.get(tool["name"])
+    if ann is None:
+        return tool
+    return dict(tool, title=ann["title"], annotations=dict(ann))
+
+
+def model_cost(tools) -> int:
+    """Token estimate of what a model is sent: name, description, schema. Clients use the
+    annotations for UI and permission prompts, so they are not counted as context cost."""
+    return est_tokens([{k: v for k, v in t.items() if k not in ("title", "annotations")} for t in tools])
+
+
 CORE_TOOLS = ("list_capabilities", "describe_tool", "call_tool")
 
 
@@ -1487,8 +1521,8 @@ def build_all_tools(backends: dict) -> list:
     tools = build_router_tools(backends)
     head = [t for n in CORE_TOOLS for t in tools if t["name"] == n]
     tail = [t for t in tools if t["name"] not in CORE_TOOLS]
-    return (head + tail + build_extra_tools()
-            + build_skill_tools(scan_skills(SKILLS_DIRS)))
+    return [annotate(t) for t in (head + tail + build_extra_tools()
+                                  + build_skill_tools(scan_skills(SKILLS_DIRS)))]
 
 
 def serve(router: Router) -> int:
@@ -1541,7 +1575,8 @@ def selftest(config: str = "") -> int:
     ok = [b for b in r.backends.values() if b.status == "ok"]
     bad = [b for b in r.backends.values() if b.status != "ok"]
     count, method = token_counter()
-    router_cost = count(ROUTER_TOOLS)
+    router_cost = count([{k: v for k, v in t.items() if k not in ("title", "annotations")}
+                         for t in ROUTER_TOOLS])
     full_cost = sum(count(b.tools) for b in ok)
     print("\ntoken counts: %s" % method)
     print("\nrouter tools cost ~%d tokens vs ~%d for the full set behind them"
