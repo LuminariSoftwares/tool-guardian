@@ -2,6 +2,8 @@
 
 ## dsh-tool-guardian 0.7.0-beta.1 / PyPI tool-guardian 0.7.0 (2026-10-14)
 
+- MCP Registry name uses the GitHub owner's case: `io.github.LuminariSoftwares/...` (the registry rejects the lower-case form).
+
 - `server.json` for the official MCP Registry (`uvx tool-guardian`).
 
 **MCP tool annotations and Registry markers (2026-10-15):**

@@ -69,7 +69,7 @@ def test_annotations_do_not_count_as_model_tokens():
 
 # ---- MCP Registry markers ----------------------------------------------------------
 
-REGISTRY_NAME = "io.github.luminarisoftwares/tool-guardian"
+REGISTRY_NAME = "io.github.LuminariSoftwares/tool-guardian"
 
 
 def test_registry_markers_exist_and_agree():

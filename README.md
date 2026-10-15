@@ -16,7 +16,7 @@
   <img alt="DeepSeek Harness bundle" src="https://img.shields.io/badge/DSH-native%20bundle-0969da.svg">
 </p>
 
-mcp-name: io.github.luminarisoftwares/tool-guardian
+mcp-name: io.github.LuminariSoftwares/tool-guardian
 
 <p align="center">
   <a href="#works-with">Works with</a> &middot;

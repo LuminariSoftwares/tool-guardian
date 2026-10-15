@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.luminarisoftwares/tool-guardian",
+  "name": "io.github.LuminariSoftwares/tool-guardian",
   "title": "Tool Guardian",
   "description": "MCP router that keeps tool definitions out of the context window and finds tools on demand.",
   "repository": {"url": "https://github.com/LuminariSoftwares/tool-guardian", "source": "github"},
