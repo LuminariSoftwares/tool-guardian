@@ -1,8 +1,19 @@
 # Changelog
 
-## Unreleased (2026-10-14)
+## Unreleased
 
-**The "Later" list from the 2026-10-10 review**, each with a test that failed on main before it
+**MCP tool annotations and Registry markers (2026-10-15):**
+
+- **MCP tool annotations.** Every tool the router and the DSH bundle expose has a `title` and `readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`. The discovery, archive and skill tools are read-only;
+  `call_tool` and the bundle's `tg__*` direct tools are destructive and open-world (they run the backend's tool);
+  `activate_group` / `restore_groups` change the session's tool set but delete nothing. The token figures in
+  `--selftest` and `list_groups_with_costs` leave the annotations out: they are client metadata (UI, permission prompts), not schema text.
+  Tests: `tests/test_tool_annotations.py` (tools listed over MCP), `tests/dsh_smoke.mjs`.
+- **MCP Registry markers** for the next release: `"mcpName": "io.github.luminarisoftwares/tool-guardian"` in
+  `package.json` and the matching `mcp-name:` line in README.md (the README PyPI and npm ship). No `server.json` yet.
+
+**The "Later" list from the 2026-10-10 review (2026-10-14)**, each with a test that failed on main before it
 (`tests/test_later_1014.py`, `tests/probe_recall_line.mjs`):
 
 - Argument checks walk nested objects and array items; a problem names its path (`params.filters[2].op`).

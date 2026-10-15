@@ -16,6 +16,8 @@
   <img alt="DeepSeek Harness bundle" src="https://img.shields.io/badge/DSH-native%20bundle-0969da.svg">
 </p>
 
+mcp-name: io.github.luminarisoftwares/tool-guardian
+
 <p align="center">
   <a href="#works-with">Works with</a> &middot;
   <a href="#install-both-deepseek-harness-about-5-minutes">Install both</a> &middot;
@@ -122,6 +124,8 @@ call_tool(server, tool, args)   invoke it, return the result
 ```
 
 Same idea as a search index: cheap catalogue always visible, detail on demand.
+
+Every tool carries the MCP annotations (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). All of them are read-only except `call_tool`, which is marked destructive and open-world because it runs whatever the backend tool does; the DSH bundle's `tg__*` direct tools carry the same values.
 
 ## Model requirement (read this before you switch)
 
