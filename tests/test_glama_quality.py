@@ -49,3 +49,23 @@ def test_readme_has_a_claude_desktop_uvx_config():
     server = json.loads(block)["mcpServers"]["tool-guardian"]
     assert server["args"][0] == "tool-guardian" and "--config" in server["args"]
     assert "mcp-name: io.github.LuminariSoftwares/tool-guardian" in README.splitlines()
+
+
+def test_glama_json_is_valid_and_names_a_maintainer():
+    meta = json.loads((ROOT / "glama.json").read_text(encoding="utf-8"))
+    assert meta["$schema"] == "https://glama.ai/mcp/schemas/server.json"
+    assert meta["maintainers"] and all(isinstance(m, str) and m for m in meta["maintainers"])
+
+
+def test_dockerfile_copies_every_module_the_package_installs():
+    """The image installs the package from the copied files; a module added to pyproject.toml but
+    not to the COPY lines would build and then fail on import."""
+    docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    modules = re.findall(r'"(\w+)"', re.search(r"py-modules = \[([^\]]*)\]", pyproject).group(1))
+    copied = " ".join(l for l in docker.splitlines() if l.startswith("COPY "))
+    for m in modules:
+        assert (m + ".py") in copied or (m.startswith("tg_") and "tg_*.py" in copied), m
+    for f in ("pyproject.toml", "README.md", "LICENSE"):
+        assert f in copied, f
+    assert 'ENTRYPOINT ["tool-guardian"]' in docker

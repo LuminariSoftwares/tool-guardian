@@ -1,12 +1,16 @@
 """
 tool_guardian.py
 ================
-An MCP server that fronts your other MCP servers and exposes THREE generic tools
-instead of dozens of specific ones, discovering the rest on demand:
+An MCP server that fronts your other MCP servers and exposes a few generic router
+tools instead of dozens of specific ones, discovering the rest on demand:
 
     list_capabilities(server?)      one line per tool -- names and purpose
+    search_capabilities(query)      find a tool by keyword across servers
     describe_tool(server, tool)     the full argument schema for ONE tool
     call_tool(server, tool, args)   invoke it, return the result
+
+plus list_groups_with_costs, retrieve_spill (while the output ladder is on) and
+list_skills / read_skill (when skills are configured). Decisions: docs/adr/.
 
     tool-guardian                      run as an MCP server (stdio)
     tool-guardian --selftest           start the backends, print the token saving
@@ -21,8 +25,8 @@ WHY THIS EXISTS
     them or not. A handful of servers routinely comes to tens of thousands of
     tokens -- most of a small local model's context window -- before the first
     user message. Loading fewer servers trades capability for room. This trades
-    neither: the model sees ~300 tokens of router tools and the full catalogue
-    only when it asks. Same progressive-disclosure idea as a search index --
+    neither: the model sees the router tools (about 1,500 tokens, measured by
+    --selftest) and the full catalogue only when it asks. Same progressive-disclosure idea as a search index --
     cheap catalogue first, detail on demand.
 
     Companion to Context Guardian (https://pypi.org/project/context-guardian/):
@@ -347,17 +351,23 @@ def build_skill_tools(skills):
 
     return [
         {"name": "list_skills",
-         "description": ("List the skills available. "
+         "description": ("List the skills (SKILL.md instruction files) available. "
                          "THESE SKILLS ARE AVAILABLE AND YOU SHOULD USE THEM RATHER THAN "
                          "GUESSING OR WORKING AROUND THEM: " + catalogue + ". "
-                         "If a request concerns any of those, call this FIRST to "
-                         "find the right skill, then read_skill. Returns one line per skill."),
+                         "If a request concerns any of those, call this FIRST, then read_skill with "
+                         "the name you picked. Skills are instructions, not tools: to run a server's "
+                         "tool use list_capabilities and call_tool instead. Read-only: scans the "
+                         "configured skill folders on local disk. Returns one line per skill: "
+                         "name -- summary."),
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "read_skill",
-         "description": ("Get the full text of one skill. "
-                         "Call after list_skills if unsure which skill to use. Returns the SKILL.md text."),
-         "inputSchema": {"type": "object", "properties": {"name": {"type": "string", "description": (
-             "Skill name as list_skills shows it, e.g. \"demo\"; never a path.")}},
+         "description": ("Get the full text of one skill. Use after list_skills, once you know which "
+                         "skill applies; an unknown name returns the list of valid names instead. "
+                         "Read-only: reads one file from a configured skill folder, never a path you "
+                         "pass. Returns the SKILL.md text."),
+         "inputSchema": {"type": "object", "properties": {"name": {
+             "type": "string", "examples": ["demo"],
+             "description": "Skill name exactly as list_skills shows it; never a path."}},
                          "required": ["name"]}},
     ]
 
@@ -1407,53 +1417,92 @@ class Router:
 
 
 def build_router_tools(backends: dict) -> list:
-    """The 3 tools the model actually sees. The catalogue of server NAMES goes in
-    the description on purpose: three unnamed generic tools give the model no
-    reason to believe any capability exists, so it improvises instead of calling
-    them. Naming the servers costs ~a few tokens and is the difference between a
-    catalogue the model opens and one it ignores."""
+    """The four tools the model always sees. The catalogue of server NAMES goes in
+    the description on purpose: unnamed generic tools give the model no reason to
+    believe any capability exists, so it improvises instead of calling them.
+    Naming the servers costs a few tokens and is the difference between a
+    catalogue the model opens and one it ignores (docs/adr/0002).
+
+    Each description says what the tool is for, when a sibling is the better call,
+    what it touches, and what comes back -- in that order, one sentence each,
+    because every word here is paid for on every request (docs/adr/0003).
+    Parameters carry `default` and `examples`, but no `minimum`/`maximum`: the
+    router clamps out-of-range numbers itself, and a client that validated a
+    bound would turn a small model's limit=50 into an error instead."""
     live = [(n, b) for n, b in sorted(backends.items()) if b.status == "ok"]
-    catalogue = "; ".join("%s (%s)" % (n, b.hint()) for n, b in live) or "none reachable"
+    catalogue = "; ".join("%s (%s)" % (n, b.hint()) for n, b in live)
+    if catalogue:
+        offer = ("THESE SERVERS ARE AVAILABLE AND YOU SHOULD USE THEM RATHER THAN "
+                 "GUESSING OR WORKING AROUND THEM: " + catalogue + ". "
+                 "If a request concerns any of those, call this FIRST to "
+                 "find the right tool, then call_tool. ")
+    else:
+        # No live backend (none configured, or none started): say so plainly. A catalogue
+        # slot reading "none reachable" after "THESE SERVERS ARE AVAILABLE" contradicts itself.
+        offer = ("No server is reachable yet (none configured or none started); this "
+                 "returns why. ")
+    server_example = live[0][0] if live else "git"
     return [
         {"name": "list_capabilities",
-         "description": ("List the tools on a connected MCP server. THESE SERVERS "
-                         "ARE AVAILABLE AND YOU SHOULD USE THEM RATHER THAN "
-                         "GUESSING OR WORKING AROUND THEM: " + catalogue + ". "
-                         "If a request concerns any of those, call this FIRST to "
-                         "find the right tool, then call_tool. To find a tool by "
-                         "keyword instead, call search_capabilities(query). Returns tool names with "
-                         "one-line summaries; describe_tool gives the arguments."),
+         "description": ("Browse the tools on the connected MCP servers. " + offer +
+                         "With a keyword in mind, "
+                         "search_capabilities is cheaper. Read-only: reads the router's catalogue "
+                         "in memory, never calls a backend. Returns, for one server, a line per tool "
+                         "(server.tool: summary, then its args); for all, one line per server with "
+                         "its tool names. A server that failed to start shows its error, never an "
+                         "empty list."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string", "description": "Server name from the catalogue, e.g. \"git\"; omit for all."}}}},
+             "server": {"type": "string", "examples": [server_example],
+                        "description": ("Server name from the catalogue above; omit to list every server.")}}}},
         {"name": "search_capabilities",
-         "description": ("Find a tool by keyword across every connected server. "
-                         "Cheaper than listing them all when you know roughly what "
-                         "you are looking for. Returns matching tools, best first."),
+         "description": ("Find a tool by keyword across every connected server, ranked best first. "
+                         "Use instead of list_capabilities when you know roughly what you need; "
+                         "an empty query falls back to the full listing. Read-only, in memory, no "
+                         "backend call. Returns a count line, then one line per match (server.tool: "
+                         "summary), with the args of the top three so call_tool needs no "
+                         "describe_tool."),
          "inputSchema": {"type": "object", "properties": {
-             "query": {"type": "string", "description": "Keywords, e.g. \"create issue\"; not a regex."},
-             "server": {"type": "string", "description": "Optional: search one server only, e.g. \"git\"."},
-             "limit": {"type": "integer", "description": "Maximum results to return; default 8."}},
+             "query": {"type": "string", "examples": ["create issue"],
+                       "description": "Words to match against tool names and summaries; plain words, not a regex."},
+             "server": {"type": "string", "examples": [server_example],
+                        "description": "Search one server only; omit to search all."},
+             "limit": {"type": "integer", "default": 8, "examples": [8],
+                       "description": "Most matches to return, 1 to 25 (clamped)."}},
              "required": ["query"]}},
         {"name": "describe_tool",
-         "description": ("Get the arguments for one tool (detail=full: whole schema). Call "
-                         "after list_capabilities and before call_tool if unsure of args. Returns the "
-                         "arguments and which are required."),
+         "description": ("Get the arguments of ONE backend tool. Use after list_capabilities or "
+                         "search_capabilities and before call_tool when you are unsure of the "
+                         "arguments; skip it when the listing already showed them. Read-only, in "
+                         "memory, no backend call. Returns the tool's summary and each argument "
+                         "with its type and whether it is required (detail=full: the tool's whole "
+                         "JSON definition), then the call_tool to make."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string", "description": "Server name, e.g. \"git\"."},
-             "tool": {"type": "string", "description": "Tool name on that server, e.g. \"git_status\"."},
-             "detail": {"enum": ["compact", "full"], "description": "full returns the whole JSON schema."}},
+             "server": {"type": "string", "examples": [server_example],
+                        "description": "Server name from the catalogue."},
+             "tool": {"type": "string", "examples": ["git_status"],
+                      "description": "Tool name on that server, as listed."},
+             "detail": {"type": "string", "enum": ["compact", "full"], "default": DESCRIBE_DETAIL,
+                        "description": ("compact: summary and arguments; full: the whole JSON "
+                                        "schema. Default %s.") % DESCRIBE_DETAIL}},
              "required": ["server", "tool"]}},
         {"name": "call_tool",
-         "description": ("Invoke a tool on a server. THIS IS THE STEP THAT ANSWERS "
-                         "THE USER -- list_capabilities only finds the name. `args` "
-                         "may be an object or a JSON string; omit it for tools that "
-                         "take no arguments. Returns the backend tool's result as text (large ones are "
-                         "shortened; retrieve_spill reads the rest). Can write or delete, as the "
-                         "backend tool does."),
+         "description": ("Run a tool on a connected server. THIS IS THE STEP THAT ANSWERS "
+                         "THE USER -- the other tools only find the name and arguments. Side "
+                         "effects are the backend tool's own: it can write, delete or reach the "
+                         "network. Use describe_tool first if unsure of the arguments: they are checked "
+                         "against the tool's schema, and a call that cannot match is not sent. Returns "
+                         "the tool's result as text; a large one is shortened, with an id retrieve_spill "
+                         "reads the rest by. Failures are text too: an unknown name lists the valid ones, "
+                         "a dead backend gives its error."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string", "description": "Server name, e.g. \"git\"."},
-             "tool": {"type": "string", "description": "Tool name on that server, e.g. \"git_status\"."},
-             "args": {"description": "The tool's arguments: an object like {\"path\": \"/tmp\"} or a JSON string."}},
+             "server": {"type": "string", "examples": [server_example],
+                        "description": "Server name from the catalogue."},
+             "tool": {"type": "string", "examples": ["git_status"],
+                      "description": "Tool name on that server, as listed."},
+             "args": {"examples": [{"repo_path": "/home/user/project"}],
+                      "description": ("The tool's arguments as describe_tool lists them: an object "
+                                      "like {\"repo_path\": \"/home/user/project\"}, or the same as a "
+                                      "JSON string. Omit for a tool that takes none.")}},
              "required": ["server", "tool"]}},
     ]
 
@@ -1463,18 +1512,33 @@ def build_extra_tools() -> list:
     extra = []
     if tg_groups is not None:
         extra.append({"name": "list_groups_with_costs",
-                      "description": ("List tool GROUPS with the context-token cost of loading each, "
-                                      "so you can pick only the group a task needs. Returns one line per group."),
+                      "description": ("List tool GROUPS (by default one per server) with the "
+                                      "context-token cost of loading each, so you can pick only the "
+                                      "group a task needs. Use it to plan context, not to find a tool "
+                                      "(list_capabilities does that); under DSH, activate_group(group) then "
+                                      "loads one. Read-only, in memory. Returns one "
+                                      "line per group (name, tool count, ~tokens), then the router's own "
+                                      "cost and the cost of loading every group."),
                       "inputSchema": {"type": "object", "properties": {}}})
     if tg_spill is not None and tg_ladder is not None and LADDER_ON:
         extra.append({"name": "retrieve_spill",
-                      "description": ("Read back the FULL original of a result that was shortened. "
-                                      "Use the id from the [tool-guardian: ...] notice. Returns the archived text."),
+                      "description": ("Read back the FULL original of a call_tool result that was "
+                                      "shortened. Use only with the id from a [tool-guardian: ...] "
+                                      "notice (no notice, no archive); to rerun the tool use call_tool. "
+                                      "Pass grep to fetch "
+                                      "just the lines you need. Read-only: reads the local archive. "
+                                      "Returns a window of the archived text, or with grep the matching "
+                                      "lines as L<number>: text, and how to page on."),
                       "inputSchema": {"type": "object", "properties": {
-                          "id": {"type": "string", "description": "sp_ + 12 hex from the notice, e.g. sp_0123456789ab"},
-                          "grep": {"type": "string", "description": "regex; returns matching lines"},
-                          "start_line": {"type": "integer", "description": "first line, from 1; default 1"},
-                          "max_lines": {"type": "integer", "description": "line limit; default 400"}},
+                          "id": {"type": "string",
+                                 "examples": ["sp_0123456789ab"],
+                                 "description": "sp_ plus 12 hex digits, exactly as the notice gave it."},
+                          "grep": {"type": "string", "examples": ["error|failed"],
+                                   "description": "Case-insensitive regex; only matching lines come back. Omit to read a window."},
+                          "start_line": {"type": "integer", "default": 1, "examples": [1],
+                                         "description": "First line of the window, from 1. Ignored with grep."},
+                          "max_lines": {"type": "integer", "default": 400, "examples": [400],
+                                        "description": "Most lines or matches to return, 1 to 2000 (clamped)."}},
                           "required": ["id"]}})
     return extra
 

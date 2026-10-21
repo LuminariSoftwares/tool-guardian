@@ -107,14 +107,30 @@ def read_servers(path: Path) -> dict:
     return servers
 
 
+def _self_name(part: str, is_command: bool) -> bool:
+    """Does one command or argument name tool-guardian? The command is matched by its
+    file name (a full path to the executable is still tool-guardian). An argument
+    matches only as a package name (`tool-guardian`, `tool-guardian@0.7.0`,
+    `tool-guardian==0.7.0`), a module name (`-m tool_guardian`) or the script
+    `tool_guardian.py` -- never as a directory that happens to be called that, which
+    is what a filesystem or git server rooted in a clone of this repo passes."""
+    part = part.strip().lower()
+    base = re.split(r"[\\/]", part)[-1]
+    if not is_command and base != part and not base.endswith(".py"):
+        return False                     # a path to a folder or a non-Python file
+    base = re.sub(r"\.(exe|cmd|bat|py)$", "", base)
+    base = re.split(r"@|==", base)[0]  # drop a pinned version
+    return base in _SELF_NEEDLES
+
+
 def is_self(spec) -> bool:
-    """True when the spec IS tool-guardian (by command or any arg)."""
+    """True when the spec IS tool-guardian: its command, or an argument naming the
+    package, module or script (see _self_name)."""
     if not isinstance(spec, dict):
         return False
-    parts = [str(spec.get("command") or "")]
-    parts.extend(str(a) for a in (spec.get("args") or []))
-    hay = " ".join(parts).lower()
-    return any(n in hay for n in _SELF_NEEDLES)
+    if _self_name(str(spec.get("command") or ""), True):
+        return True
+    return any(_self_name(str(a), False) for a in (spec.get("args") or []))
 
 
 def _skip_reason(spec):

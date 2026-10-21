@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+**Glama and portfolio pass (2026-10-21):**
+
+- **Tool definitions.** Every router tool's description says what it is for, when a sibling tool is the better call,
+  what it touches (read-only in memory or on local disk; `call_tool` has the backend tool's side effects) and what
+  comes back. Every parameter has a type, a description, examples, and a default or what omitting it does;
+  `describe_tool.detail` gains `type` and the default the router really uses. No `minimum`/`maximum`/`pattern`:
+  the router clamps those values itself ([ADR 0004](docs/adr/0004-lenient-inputs-strict-checks.md)).
+  `tests/test_tool_definitions.py` enforces all of it and checks the README tool table against the live schemas.
+- With no live backend, `list_capabilities` no longer reads "THESE SERVERS ARE AVAILABLE ...: none reachable"
+  (Glama's 2026-10-15 review read it as an unresolved template); it says no server is reachable yet and that the
+  call returns why. `call_tool` says how failures come back; `list_groups_with_costs` names `activate_group`.
+- **Cost of that, stated:** the router's tools with no backends go from 942 to 1,478 tokens (estimate), pinned at
+  1,500 by a test; the seven-server bench from 1,209 to 1,790 tokens (94.0 % → 91.1 % less). README figures
+  re-measured with `bench/bench_tokens.py`. Tool names and behaviour are unchanged.
+- **Fix: `tool-guardian-setup add`/`import` refused a server whose path merely contained "tool-guardian"**
+  (for example a filesystem server rooted in a clone of this repo) as "tool-guardian itself". The command is now
+  matched by file name and an argument only as the package, module or script. `tests/test_setup_is_self.py`.
+- `docs/adr/`: six decision records derived from the code and its history.
+- README: a 60-second quick start (verified from a clean virtualenv), an Architecture section with a diagram and
+  the decisions' trade-offs, a Claude Code command, how it is tested, and the router's own cost among the limits.
+- `Dockerfile` (Python only; `docker run -i`) and `.dockerignore`, for container users and directory build checks.
+- Module docstring no longer says three tools and ~300 tokens.
+- Already on `main` since 0.7.0 without an entry: SPDX licence metadata (`license = "MIT"`, `license-files`,
+  setuptools ≥ 77), `glama.json`, the README Tools table and Claude Desktop `uvx` example.
+
 ## dsh-tool-guardian 0.7.0-beta.1 / PyPI tool-guardian 0.7.0 (2026-10-14)
 
 - MCP Registry name uses the GitHub owner's case: `io.github.LuminariSoftwares/...` (the registry rejects the lower-case form).
