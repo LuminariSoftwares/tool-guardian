@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `Dockerfile` runs as a non-root user `guardian` (uid 10001); mount config at `/home/guardian/.tool-guardian`.
+- Fix: `tool-guardian-setup` recognises a scoped npm package (`npx -y @scope/tool-guardian`,
+  `@scope/dsh-tool-guardian@0.6.0`) as tool-guardian itself; folder paths still do not match.
+
 **Glama and portfolio pass (2026-10-21):**
 
 - **Tool definitions.** Every router tool's description says what it is for, when a sibling tool is the better call,
