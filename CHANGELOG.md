@@ -10,8 +10,11 @@
   `describe_tool.detail` gains `type` and the default the router really uses. No `minimum`/`maximum`/`pattern`:
   the router clamps those values itself ([ADR 0004](docs/adr/0004-lenient-inputs-strict-checks.md)).
   `tests/test_tool_definitions.py` enforces all of it and checks the README tool table against the live schemas.
-- **Cost of that, stated:** the router's tools with no backends go from 942 to 1,456 tokens (estimate), pinned at
-  1,500 by a test; the seven-server bench from 1,209 to 1,732 tokens (94.0 % → 91.3 % less). README figures
+- With no live backend, `list_capabilities` no longer reads "THESE SERVERS ARE AVAILABLE ...: none reachable"
+  (Glama's 2026-10-15 review read it as an unresolved template); it says no server is reachable yet and that the
+  call returns why. `call_tool` says how failures come back; `list_groups_with_costs` names `activate_group`.
+- **Cost of that, stated:** the router's tools with no backends go from 942 to 1,478 tokens (estimate), pinned at
+  1,500 by a test; the seven-server bench from 1,209 to 1,790 tokens (94.0 % → 91.1 % less). README figures
   re-measured with `bench/bench_tokens.py`. Tool names and behaviour are unchanged.
 - **Fix: `tool-guardian-setup add`/`import` refused a server whose path merely contained "tool-guardian"**
   (for example a filesystem server rooted in a clone of this repo) as "tool-guardian itself". The command is now

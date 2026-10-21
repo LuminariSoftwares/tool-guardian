@@ -84,6 +84,22 @@ def test_readme_tool_table_matches_the_schemas(tmp_path):
 
 
 def test_router_cost_is_pinned():
-    """Descriptions are paid for on every request. 1,456 is the cost with no backends after the
+    """Descriptions are paid for on every request. 1,478 is the cost with no backends after the
     2026-10-21 rewrite; raising this number is a decision, write it in the CHANGELOG."""
     assert tg.model_cost(tg.build_all_tools({})) <= 1500
+
+
+def test_no_backend_description_does_not_contradict_itself():
+    """Glama (and any client started before a config exists) inspects the router with no backends.
+    The 2026-10-15 score flagged "THESE SERVERS ARE AVAILABLE ...: none reachable" as an unresolved
+    template; with nothing live the description now just says so."""
+    empty = tg.build_router_tools({})[0]["description"]
+    assert "none reachable" not in empty and "THESE SERVERS ARE AVAILABLE" not in empty
+    assert "No server is reachable yet" in empty
+
+    class Live:
+        status = "ok"
+        def hint(self):
+            return "git status/diff"
+    named = tg.build_router_tools({"git": Live()})[0]["description"]
+    assert "THESE SERVERS ARE AVAILABLE" in named and "git (git status/diff)" in named

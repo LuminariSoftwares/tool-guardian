@@ -28,7 +28,7 @@ asks for it, and `call_tool(server, tool, args)` forwards the call unchanged. Th
 
 ## Consequences
 
-- The fixed cost drops to the router tools (1,732 tokens on the seven-server bench, 91.3 % less).
+- The fixed cost drops to the router tools (1,790 tokens on the seven-server bench, 91.1 % less).
 - Every capability is now two or three calls away instead of one. The model has to *choose* to call
   `list_capabilities` first; the README's "Model requirement" section records one harness where small
   models did not, and one where the same model family did.

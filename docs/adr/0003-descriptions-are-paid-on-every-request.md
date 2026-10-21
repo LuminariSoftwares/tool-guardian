@@ -29,7 +29,7 @@ server, but every added word is re-sent on every request.
 
 ## Consequences
 
-- The 2026-10-21 rewrite raised the cost from 942 to 1,456 tokens with no backends, and on the
-  seven-server bench from 1,209 to 1,732 (94.0 % → 91.3 % saved; 3.7 % → 5.3 % of a 32K window).
+- The 2026-10-21 rewrite raised the cost from 942 to 1,478 tokens with no backends, and on the
+  seven-server bench from 1,209 to 1,790 (94.0 % → 91.1 % saved; 3.7 % → 5.5 % of a 32K window).
 - There is no terse mode for the descriptions yet; `TOOL_GUARDIAN_PRESET=small` shortens only the
   catalogue.

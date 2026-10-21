@@ -1,6 +1,6 @@
 <h1 align="center">Tool Guardian</h1>
 
-<p align="center"><b>Seven MCP servers for 1,732 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
+<p align="center"><b>Seven MCP servers for 1,790 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
 
 <p align="center">For local models served by Ollama, LM Studio, vLLM or llama.cpp: the router never talks to the model backend, so any of them works when your client's model calls tools.</p>
 
@@ -40,7 +40,7 @@ Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-gua
 
 | | Without Tool Guardian | With it |
 |---|---|---|
-| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,732 tokens** (5 %); a schema is fetched only when the model asks |
+| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,790 tokens** (5 %); a schema is fetched only when the model asks |
 | A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
 | DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
 | A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
@@ -134,7 +134,7 @@ You have two ways to deal with that today, and both cost you something:
 | Load fewer MCP servers | You lose the capability entirely |
 | Live with it | Two-thirds of the window is gone before you type |
 
-Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just a handful of small tools plus a one-line catalogue of server names (1,732 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
+Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just a handful of small tools plus a one-line catalogue of server names (1,790 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
 
 ```
 list_capabilities(server?)      one line per tool — names and purpose
@@ -226,7 +226,7 @@ Key decisions, each with its trade-off (full records in [docs/adr/](docs/adr/)):
 |---|---|---|
 | Generic router tools, schemas on demand ([0001](docs/adr/0001-router-with-on-demand-discovery.md)) | 91 % fewer schema tokens on every request (bench) | every capability is 2–3 calls away; the model must choose to look |
 | Loud failure, named catalogue ([0002](docs/adr/0002-loud-failure-and-a-named-catalogue.md)) | a dead server is never mistaken for "no such tool" | the description grows a few tokens per server |
-| Descriptions budgeted and pinned ([0003](docs/adr/0003-descriptions-are-paid-on-every-request.md)) | tools a model can choose between without guessing | 1,456 tokens with no backends, pinned at ≤ 1,500 by a test |
+| Descriptions budgeted and pinned ([0003](docs/adr/0003-descriptions-are-paid-on-every-request.md)) | tools a model can choose between without guessing | 1,478 tokens with no backends, pinned at ≤ 1,500 by a test |
 | Lenient inputs, strict backend checks ([0004](docs/adr/0004-lenient-inputs-strict-checks.md)) | small models' near-miss calls still work; impossible calls cost no round trip | schemas are looser than what the router enforces |
 | One stdlib Python core; DSH bundle is a bridge ([0005](docs/adr/0005-one-python-core-stdlib-only.md)) | installs anywhere; one router to fix | MCP stdio is hand-written; the npm package needs a Python |
 | Archive before shortening ([0006](docs/adr/0006-archive-before-shortening.md)) | big results stop flooding the window, nothing is lost | originals are kept on local disk |
@@ -453,7 +453,7 @@ Reproduce it yourself: `python bench/bench_tokens.py` (no network, no model; `--
 | sequential-thinking | 1 | 1,185 |
 | **all seven** | **95** | **20,005** |
 
-**Every request:** 20,005 tokens of tool schemas without tool-guardian, 1,732 with it (**91.3 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 5 % full. (Before 2026-10-21 the router's descriptions were terser and this was 1,209; [ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md) records why they grew.)
+**Every request:** 20,005 tokens of tool schemas without tool-guardian, 1,790 with it (**91.1 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 5 % full. (Before 2026-10-21 the router's descriptions were terser and this was 1,209; [ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md) records why they grew.)
 
 The output ladder on four typical tool results:
 
@@ -607,7 +607,7 @@ The longer versions, with alternatives and consequences, are the [decision recor
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q                      # 180 tests
+python -m pytest -q                      # 181 tests
 npm install --no-package-lock --legacy-peer-deps
 npm run check && npm run test:node       # bundle syntax, text-call parser and repair
 node tests/dsh_smoke.mjs && node tests/probe_dsh_mvp.mjs && node tests/probe_dsh_loopguard.mjs

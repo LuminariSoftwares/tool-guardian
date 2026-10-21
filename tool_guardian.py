@@ -1430,15 +1430,22 @@ def build_router_tools(backends: dict) -> list:
     router clamps out-of-range numbers itself, and a client that validated a
     bound would turn a small model's limit=50 into an error instead."""
     live = [(n, b) for n, b in sorted(backends.items()) if b.status == "ok"]
-    catalogue = "; ".join("%s (%s)" % (n, b.hint()) for n, b in live) or "none reachable"
+    catalogue = "; ".join("%s (%s)" % (n, b.hint()) for n, b in live)
+    if catalogue:
+        offer = ("THESE SERVERS ARE AVAILABLE AND YOU SHOULD USE THEM RATHER THAN "
+                 "GUESSING OR WORKING AROUND THEM: " + catalogue + ". "
+                 "If a request concerns any of those, call this FIRST to "
+                 "find the right tool, then call_tool. ")
+    else:
+        # No live backend (none configured, or none started): say so plainly. A catalogue
+        # slot reading "none reachable" after "THESE SERVERS ARE AVAILABLE" contradicts itself.
+        offer = ("No server is reachable yet (none configured or none started); this "
+                 "returns why. ")
     server_example = live[0][0] if live else "git"
     return [
         {"name": "list_capabilities",
-         "description": ("Browse the tools on the connected MCP servers. THESE SERVERS "
-                         "ARE AVAILABLE AND YOU SHOULD USE THEM RATHER THAN "
-                         "GUESSING OR WORKING AROUND THEM: " + catalogue + ". "
-                         "If a request concerns any of those, call this FIRST to "
-                         "find the right tool, then call_tool. With a keyword in mind, "
+         "description": ("Browse the tools on the connected MCP servers. " + offer +
+                         "With a keyword in mind, "
                          "search_capabilities is cheaper. Read-only: reads the router's catalogue "
                          "in memory, never calls a backend. Returns, for one server, a line per tool "
                          "(server.tool: summary, then its args); for all, one line per server with "
@@ -1482,9 +1489,11 @@ def build_router_tools(backends: dict) -> list:
          "description": ("Run a tool on a connected server. THIS IS THE STEP THAT ANSWERS "
                          "THE USER -- the other tools only find the name and arguments. Side "
                          "effects are the backend tool's own: it can write, delete or reach the "
-                         "network. Arguments are checked against the tool's schema first, and a "
-                         "call that cannot match is not sent. Returns the tool's result as text; "
-                         "a large one is shortened, with an id retrieve_spill reads the rest by."),
+                         "network. Use describe_tool first if unsure of the arguments: they are checked "
+                         "against the tool's schema, and a call that cannot match is not sent. Returns "
+                         "the tool's result as text; a large one is shortened, with an id retrieve_spill "
+                         "reads the rest by. Failures are text too: an unknown name lists the valid ones, "
+                         "a dead backend gives its error."),
          "inputSchema": {"type": "object", "properties": {
              "server": {"type": "string", "examples": [server_example],
                         "description": "Server name from the catalogue."},
@@ -1506,7 +1515,8 @@ def build_extra_tools() -> list:
                       "description": ("List tool GROUPS (by default one per server) with the "
                                       "context-token cost of loading each, so you can pick only the "
                                       "group a task needs. Use it to plan context, not to find a tool "
-                                      "(list_capabilities does that). Read-only, in memory. Returns one "
+                                      "(list_capabilities does that); under DSH, activate_group(group) then "
+                                      "loads one. Read-only, in memory. Returns one "
                                       "line per group (name, tool count, ~tokens), then the router's own "
                                       "cost and the cost of loading every group."),
                       "inputSchema": {"type": "object", "properties": {}}})
@@ -1514,7 +1524,8 @@ def build_extra_tools() -> list:
         extra.append({"name": "retrieve_spill",
                       "description": ("Read back the FULL original of a call_tool result that was "
                                       "shortened. Use only with the id from a [tool-guardian: ...] "
-                                      "notice; to run the tool again use call_tool. Pass grep to fetch "
+                                      "notice (no notice, no archive); to rerun the tool use call_tool. "
+                                      "Pass grep to fetch "
                                       "just the lines you need. Read-only: reads the local archive. "
                                       "Returns a window of the archived text, or with grep the matching "
                                       "lines as L<number>: text, and how to page on."),
