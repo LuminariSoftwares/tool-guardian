@@ -111,10 +111,12 @@ def _self_name(part: str, is_command: bool) -> bool:
     """Does one command or argument name tool-guardian? The command is matched by its
     file name (a full path to the executable is still tool-guardian). An argument
     matches only as a package name (`tool-guardian`, `tool-guardian@0.7.0`,
-    `tool-guardian==0.7.0`), a module name (`-m tool_guardian`) or the script
-    `tool_guardian.py` -- never as a directory that happens to be called that, which
+    `tool-guardian==0.7.0`, scoped `@scope/tool-guardian@0.7.0`), a module name
+    (`-m tool_guardian`) or the script `tool_guardian.py` -- never as a directory that happens to be called that, which
     is what a filesystem or git server rooted in a clone of this repo passes."""
     part = part.strip().lower()
+    if not is_command and part.startswith("@") and part.count("/") == 1 and "\\" not in part:
+        part = part.split("/", 1)[1]     # a scoped npm package: @scope/name[@version]
     base = re.split(r"[\\/]", part)[-1]
     if not is_command and base != part and not base.endswith(".py"):
         return False                     # a path to a folder or a non-Python file

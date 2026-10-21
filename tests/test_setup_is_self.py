@@ -18,6 +18,8 @@ import tg_setup
     {"command": "python", "args": ["-m", "tool_guardian"]},
     {"command": "npx", "args": ["-y", "dsh-tool-guardian"]},
     {"command": "TOOL-GUARDIAN", "args": []},
+    {"command": "npx", "args": ["-y", "@someone/tool-guardian"]},
+    {"command": "npx", "args": ["-y", "@someone/dsh-tool-guardian@0.6.0"]},
 ])
 def test_tool_guardian_itself_is_recognised(spec):
     assert tg_setup.is_self(spec)
@@ -29,6 +31,10 @@ def test_tool_guardian_itself_is_recognised(spec):
     {"command": "uvx", "args": ["mcp-server-git", "--repository", "C:\\src\\tool-guardian"]},
     {"command": "python", "args": ["/home/user/tool-guardian-notes/server.py"]},
     {"command": "node", "args": ["server.js"], "env": {"ROOT": "/srv/tool_guardian"}},
+    {"command": "uvx", "args": ["some-server", "/home/u/tool-guardian"]},
+    {"command": "uvx", "args": ["some-server", "C:\\src\\tool-guardian"]},
+    {"command": "uvx", "args": ["some-server", "./tool-guardian"]},
+    {"command": "npx", "args": ["-y", "@someone/other-server", "@data/tool-guardian/x"]},
 ])
 def test_a_server_that_only_mentions_the_name_in_a_path_is_not_self(spec):
     assert not tg_setup.is_self(spec)
