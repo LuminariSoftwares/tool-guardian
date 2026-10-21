@@ -1,12 +1,16 @@
 """
 tool_guardian.py
 ================
-An MCP server that fronts your other MCP servers and exposes THREE generic tools
-instead of dozens of specific ones, discovering the rest on demand:
+An MCP server that fronts your other MCP servers and exposes a few generic router
+tools instead of dozens of specific ones, discovering the rest on demand:
 
     list_capabilities(server?)      one line per tool -- names and purpose
+    search_capabilities(query)      find a tool by keyword across servers
     describe_tool(server, tool)     the full argument schema for ONE tool
     call_tool(server, tool, args)   invoke it, return the result
+
+plus list_groups_with_costs, retrieve_spill (while the output ladder is on) and
+list_skills / read_skill (when skills are configured). Decisions: docs/adr/.
 
     tool-guardian                      run as an MCP server (stdio)
     tool-guardian --selftest           start the backends, print the token saving
@@ -21,8 +25,8 @@ WHY THIS EXISTS
     them or not. A handful of servers routinely comes to tens of thousands of
     tokens -- most of a small local model's context window -- before the first
     user message. Loading fewer servers trades capability for room. This trades
-    neither: the model sees ~300 tokens of router tools and the full catalogue
-    only when it asks. Same progressive-disclosure idea as a search index --
+    neither: the model sees the router tools (about 1,500 tokens, measured by
+    --selftest) and the full catalogue only when it asks. Same progressive-disclosure idea as a search index --
     cheap catalogue first, detail on demand.
 
     Companion to Context Guardian (https://pypi.org/project/context-guardian/):
