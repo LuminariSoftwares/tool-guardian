@@ -1,6 +1,6 @@
 <h1 align="center">Tool Guardian</h1>
 
-<p align="center"><b>Seven MCP servers for 1,209 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
+<p align="center"><b>Seven MCP servers for 1,732 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
 
 <p align="center">For local models served by Ollama, LM Studio, vLLM or llama.cpp: the router never talks to the model backend, so any of them works when your client's model calls tools.</p>
 
@@ -19,11 +19,13 @@
 mcp-name: io.github.LuminariSoftwares/tool-guardian
 
 <p align="center">
+  <a href="#quick-start-60-seconds">Quick start</a> &middot;
   <a href="#works-with">Works with</a> &middot;
   <a href="#install-both-deepseek-harness-about-5-minutes">Install both</a> &middot;
   <a href="docs/first-5-minutes.md">First 5 minutes</a> &middot;
   <a href="#why-this-exists">Why</a> &middot;
   <a href="#two-ways-to-run-it">Two ways to run it</a> &middot;
+  <a href="#architecture">Architecture</a> &middot;
   <a href="#install">Install</a> &middot;
   <a href="#see-what-it-saves">Measure it</a> &middot;
   <a href="#it-keeps-tool-results-small-too-030">Output ladder</a> &middot;
@@ -38,10 +40,27 @@ Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-gua
 
 | | Without Tool Guardian | With it |
 |---|---|---|
-| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,209 tokens** (4 %); a schema is fetched only when the model asks |
+| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,732 tokens** (5 %); a schema is fetched only when the model asks |
 | A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
 | DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
 | A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
+
+## Quick start (60 seconds)
+
+Python 3.9+ and, for this example, Node.js (the filesystem server runs with `npx`). Run in any terminal:
+
+```bash
+pip install tool-guardian
+tool-guardian-setup add files -- npx -y @modelcontextprotocol/server-filesystem "$HOME"
+tool-guardian --selftest
+claude mcp add --scope user tool-guardian -- tool-guardian     # or any client: see "Run" below
+```
+
+Success looks like `added 'files' to ~/.tool-guardian/mcp.json`, then from `--selftest`
+`1 backend(s) up, 14 tools reachable.` and a `router tools cost ~N tokens vs ~M` line. Already have
+servers in Claude Desktop, Cursor or Windsurf? `tool-guardian-setup import` copies them instead of `add`.
+In the client, ask for something one of your servers does; the model should call `list_capabilities`
+(or `search_capabilities`) and then `call_tool`.
 
 ## Works with
 
@@ -115,7 +134,7 @@ You have two ways to deal with that today, and both cost you something:
 | Load fewer MCP servers | You lose the capability entirely |
 | Live with it | Two-thirds of the window is gone before you type |
 
-Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just a handful of small tools plus a one-line catalogue of server names (1,209 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
+Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just a handful of small tools plus a one-line catalogue of server names (1,732 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
 
 ```
 list_capabilities(server?)      one line per tool — names and purpose
@@ -153,7 +172,7 @@ It is one repo and one Python router. Pick the front door that matches your harn
 
 ```mermaid
 flowchart LR
-    A["Your agent<br/>(Claude Code, DSH, any MCP client)"] -->|"6 tools, ~1,200 tokens for 7 servers"| B["Tool Guardian"]
+    A["Your agent<br/>(Claude Code, DSH, any MCP client)"] -->|"6 tools, ~1,700 tokens for 7 servers"| B["Tool Guardian"]
     B -->|"on demand"| C["filesystem"]
     B -->|"on demand"| D["git"]
     B -->|"on demand"| E["n8n, database, ..."]
@@ -176,17 +195,41 @@ The router exposes these tools. The first four are always there; `list_groups_wi
 | `list_skills` | none | one line per skill (only with `TOOL_GUARDIAN_SKILLS`) |
 | `read_skill` | `name` | the full text of one skill (only with `TOOL_GUARDIAN_SKILLS`) |
 
-All but `call_tool` only report; `call_tool` does whatever the backend tool does.
+All but `call_tool` only report (read-only, no network: the catalogue is in memory, the archive and skills on local disk); `call_tool` does whatever the backend tool does. Each tool's description says when to use a sibling instead and what it returns, and every parameter has a type, an example and a default; `tests/test_tool_definitions.py` checks that, and checks this table's argument names against the schemas the server really lists.
 
-## Where it sits
+## Architecture
 
+```mermaid
+flowchart LR
+    client["MCP client<br/>(Claude Code, Claude Desktop, ...)"] -- "stdio JSON-RPC" --> serve
+    dsh["DSH bundle<br/>index.js"] -- "line JSON<br/>tg_bridge.py" --> router
+    subgraph tg["tool-guardian (Python, standard library only)"]
+        serve["serve()<br/>MCP over stdio"] --> router["Router<br/>catalogue · search · arg checks · loop guard"]
+        router --> ladder["tg_ladder<br/>shape result by type"]
+        ladder -- "lossy?" --> spill[("tg_spill archive<br/>~/.tool-guardian/spill")]
+        router --> groups["tg_groups<br/>token price per group"]
+        router --> state[("calls.jsonl · state.json")]
+    end
+    router -- "stdio, started at launch,<br/>respawned once" --> b1["backend MCP server"]
+    router --> b2["backend MCP server"]
 ```
-your CLI / agent (Claude Code, OpenClaude, any MCP client)
-    -> Tool Guardian          (this project — one MCP server)
-        -> your real MCP servers (filesystem, git, n8n, database, ...)
-```
 
-You point your client at **one** MCP server — Tool Guardian — and give Tool Guardian the same `mcpServers` config you'd have given the client. It starts your servers, keeps them warm, and proxies calls through on demand.
+You point your client at **one** MCP server, Tool Guardian, and give it the same `mcpServers` config you would have
+given the client. It starts every backend as a child process at launch, reads each `tools/list` once, and from then on
+answers `list_capabilities`, `search_capabilities` and `describe_tool` from memory. Only `call_tool` reaches a backend.
+Its arguments are checked against the backend tool's schema first, and the result goes through the output ladder before
+the model sees it. The DSH bundle reaches the same `Router` through a private bridge process instead of MCP.
+
+Key decisions, each with its trade-off (full records in [docs/adr/](docs/adr/)):
+
+| Decision | What it buys | What it costs |
+|---|---|---|
+| Generic router tools, schemas on demand ([0001](docs/adr/0001-router-with-on-demand-discovery.md)) | 91 % fewer schema tokens on every request (bench) | every capability is 2–3 calls away; the model must choose to look |
+| Loud failure, named catalogue ([0002](docs/adr/0002-loud-failure-and-a-named-catalogue.md)) | a dead server is never mistaken for "no such tool" | the description grows a few tokens per server |
+| Descriptions budgeted and pinned ([0003](docs/adr/0003-descriptions-are-paid-on-every-request.md)) | tools a model can choose between without guessing | 1,456 tokens with no backends, pinned at ≤ 1,500 by a test |
+| Lenient inputs, strict backend checks ([0004](docs/adr/0004-lenient-inputs-strict-checks.md)) | small models' near-miss calls still work; impossible calls cost no round trip | schemas are looser than what the router enforces |
+| One stdlib Python core; DSH bundle is a bridge ([0005](docs/adr/0005-one-python-core-stdlib-only.md)) | installs anywhere; one router to fix | MCP stdio is hand-written; the npm package needs a Python |
+| Archive before shortening ([0006](docs/adr/0006-archive-before-shortening.md)) | big results stop flooding the window, nothing is lost | originals are kept on local disk |
 
 ## Install
 
@@ -330,6 +373,16 @@ Claude Desktop (`claude_desktop_config.json`) without installing anything first,
 }
 ```
 
+Claude Code, from a terminal (user scope, every project):
+
+```bash
+claude mcp add --scope user tool-guardian -- tool-guardian --config /path/to/your/mcp.json
+```
+
+In a container: `docker build -t tool-guardian .` then `docker run -i --rm -v "$HOME/.tool-guardian:/root/.tool-guardian" tool-guardian`.
+The backends run inside the container too, so the image needs whatever they are started with (`npx`, `uvx`, ...); the
+bundled [`Dockerfile`](Dockerfile) has Python only.
+
 Everything your servers can do is still reachable — the model just discovers it in two steps (`list_capabilities` → `call_tool`) instead of paying for all of it up front.
 
 ### A backend that exits or stops answering
@@ -345,7 +398,7 @@ handshake. A second failure within 60 s marks the backend `DOWN` and it is not r
 tool-guardian --selftest
 ```
 
-Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. *"router tools cost ~310 tokens vs ~28,700 for the full set behind them → ~28,390 freed on every request."* Below the totals it prints one `[server] N tools, ~M tokens` line per server, and it exits non-zero if any configured server failed to start. It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
+Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. with one filesystem server behind it: *"router tools cost ~1482 tokens vs ~3943 for the full set behind them -> ~2461 tokens freed on every request (62% smaller)"*. One small server is close to break-even; the saving grows with every server added. Below the totals it prints one `[server] N tools, ~M tokens` line per server, and it exits non-zero if any configured server failed to start. It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
 
 Token counts use `tiktoken` (cl100k_base) when it is importable and the characters ÷ 3.5 estimate otherwise; the report prints which, e.g. `token counts: estimate (chars / 3.5; tiktoken not available)`. `pip install tiktoken` switches it; nothing else needs it.
 
@@ -400,7 +453,7 @@ Reproduce it yourself: `python bench/bench_tokens.py` (no network, no model; `--
 | sequential-thinking | 1 | 1,185 |
 | **all seven** | **95** | **20,005** |
 
-**Every request:** 20,005 tokens of tool schemas without tool-guardian, 1,209 with it (**94.0 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 4 % full.
+**Every request:** 20,005 tokens of tool schemas without tool-guardian, 1,732 with it (**91.3 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 5 % full. (Before 2026-10-21 the router's descriptions were terser and this was 1,209; [ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md) records why they grew.)
 
 The output ladder on four typical tool results:
 
@@ -535,6 +588,8 @@ the default behaviour, unchanged. The hook only sees the tools its `matcher` sen
 
 ## Design notes (the parts that matter)
 
+The longer versions, with alternatives and consequences, are the [decision records](docs/adr/).
+
 - **Failure is loud, on purpose.** A router is a single point of failure: without one a broken server costs you that server; behind one it could cost you all of them. So an unreachable backend is reported as `UNKNOWN` with its real error, **never as an empty tool list**. A model that asks for a server and gets `[]` concludes the capability doesn't exist and quietly works around it — the exact failure this avoids.
 - **Built for models, not just machines.** It accepts a tool's `args` as either an object or a JSON string, aliases the near-misses models actually send (`query`/`name` → `server`), and ends every result with the concrete **NEXT STEP** to call — because a model that receives a catalogue and no instruction tends to stop there instead of finishing the task.
 - **The catalogue names your servers.** Six unnamed generic tools give a model no reason to believe any capability exists, so it improvises. Naming the servers in the tool description costs a few tokens and is the difference between a catalogue the model opens and six tools it ignores.
@@ -544,19 +599,34 @@ the default behaviour, unchanged. The hook only sees the tools its `matcher` sen
 - **stdio servers only.** An HTTP/SSE server (a `"url"` entry) is reported `UNSUPPORTED` — load it directly rather than through here.
 - It does not merge or rename tools; it proxies them faithfully. `call_tool(server, tool, args)` reaches the real tool unchanged.
 - Over plain MCP it cannot see a client's shell calls; see [bypass detection and its limits](#bypass-detection-over-plain-mcp-and-its-limits).
+- **The router's own tools cost about 1,500 tokens** (with no backends; more with a long server list). With one small server behind it, that is close to break-even; it pays off from a few servers up. There is no terse mode for the descriptions yet.
+- The token figures are an estimate (characters ÷ 3.5) unless `tiktoken` is installed.
 - It has no card in the DSH web UI; configure it in `~/.dsh/settings.yaml` ([docs/dsh-settings.md](docs/dsh-settings.md)).
 
-## Development
+## How it is tested
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                  # includes the contract probes in tests/probes/
-pnpm install && node tests/dsh_smoke.mjs && node tests/probe_dsh_mvp.mjs && node tests/probe_setup.mjs
-npm run check && npm run test:node
+python -m pytest -q                      # 180 tests
+npm install --no-package-lock --legacy-peer-deps
+npm run check && npm run test:node       # bundle syntax, text-call parser and repair
+node tests/dsh_smoke.mjs && node tests/probe_dsh_mvp.mjs && node tests/probe_dsh_loopguard.mjs
+node tests/probe_recall_line.mjs && node tests/probe_setup.mjs
 pip install -e . && python tests/clients/run_clients.py   # real clients on PATH vs examples/ (optional)
 ```
 
-CI runs pytest and the node tests on Ubuntu, Windows and macOS.
+- **Over the real protocol.** The tool-definition, annotation and README tests start `tool_guardian.py` as a stdio MCP
+  server with a stub backend and read what `tools/list` actually returns.
+- **Contract probes** (`tests/probes/`) were written from each module's contract before the module existed, so they
+  check what a module's own selftest could not make true by being weak.
+- **Regression tests fail first.** Each fix in the [CHANGELOG](CHANGELOG.md) names the test that failed on `main`
+  before it.
+- **Snapshots.** `tests/test_rank_identity.py` pins search and catalogue output on recorded catalogues;
+  `bench/bench_tokens.py` re-measures every token figure in this README from `bench/fixtures/catalogs/`.
+- **Clients.** `tests/clients/run_clients.py` drives Claude Code, OpenCode, Cline and Continue against a scripted model
+  (no API key, no network); it is run by hand, not in CI.
+- **CI** runs pytest on Ubuntu, Windows and macOS (Python 3.11) and Ubuntu (Python 3.9), the node suites on all three
+  operating systems, and a privacy scan of every tracked file.
 
 ## Acknowledgements
 
