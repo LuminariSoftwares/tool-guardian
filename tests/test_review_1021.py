@@ -210,6 +210,15 @@ def test_an_unknown_method_is_method_not_found(tmp_path):
     assert "server/discover" in reply["error"]["message"]
 
 
+def test_ping_is_answered_with_an_empty_result(tmp_path):
+    """MCP's keep-alive: a ping must come back as an empty result, with the same id. main
+    answered it by accident, through the catch-all that the -32601 above replaced."""
+    out = _speak(tmp_path, HANDSHAKE + [json.dumps(
+        {"jsonrpc": "2.0", "id": 7, "method": "ping"}) + "\n"])
+    reply = [m for m in out if m.get("id") == 7][0]
+    assert reply == {"jsonrpc": "2.0", "id": 7, "result": {}}, reply
+
+
 @pytest.mark.parametrize("junk", ["[1, 2, 3]", '"a string"', "42"])
 def test_a_non_object_line_is_an_invalid_request_and_the_session_survives(tmp_path, junk):
     out = _speak(tmp_path, HANDSHAKE + [junk + "\n", json.dumps(

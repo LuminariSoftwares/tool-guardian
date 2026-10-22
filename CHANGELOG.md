@@ -38,6 +38,8 @@
   show up in `list_capabilities`, `search_capabilities`, `call_tool` and `--selftest`.
 - **Fix: an unknown JSON-RPC method answers `-32601`** instead of `{"result": {}}`, so a client probing
   the stateless 2026-07-28 revision's `server/discover` gets "method not found" and falls back.
+  `ping` keeps its empty result, now because the spec says so rather than because the old catch-all
+  answered everything that way.
 - **Fix: a JSON array, string or number on stdin answers `-32600` and the session survives.** Such a
   line used to raise `AttributeError: 'list' object has no attribute 'get'` and end the router.
 - `sys.stdin` is reconfigured to UTF-8 in both `serve()` and the hook: MCP stdio is UTF-8 whatever the

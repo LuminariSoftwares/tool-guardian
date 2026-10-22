@@ -1755,6 +1755,11 @@ def serve(router: Router) -> int:
                      "serverInfo": {"name": "tool-guardian", "version": __version__}}
         elif method == "tools/list":
             reply = {"tools": ROUTER_TOOLS}
+        elif method == "ping":
+            # MCP utilities/ping: an EMPTY result, and nothing else. Clients send it as a
+            # keep-alive, so the -32601 below must never see it -- main answered it only by
+            # accident, through the catch-all that returned {} for every unknown method.
+            reply = {}
         elif method == "tools/call":
             p = msg.get("params") or {}
             try:
