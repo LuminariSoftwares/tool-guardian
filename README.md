@@ -304,7 +304,7 @@ Pure standard library — nothing else to install.
 
 > PyPI and npm now ship the same code: `pip install tool-guardian` (0.3.0+) for the MCP server, `dsh-tool-guardian` on npm for DSH.
 
-Which install is which: the Python package `tool-guardian` **0.7.0** is the MCP server (`pip install tool-guardian`, or `uvx tool-guardian`); the npm package `dsh-tool-guardian` **0.7.0-beta.1** is the DeepSeek Harness bundle. They are versioned separately.
+Which install is which: the Python package `tool-guardian` **0.8.0** is the MCP server (`pip install tool-guardian`, or `uvx tool-guardian`); the npm package `dsh-tool-guardian` **0.8.0-beta.1** is the DeepSeek Harness bundle. They are versioned separately.
 
 ## Configure
 
@@ -652,10 +652,10 @@ the default behaviour, unchanged. The hook only sees the tools its `matcher` sen
 | The model never calls the router — it answers from memory or reaches for the shell | small models bypass generic tools; this is the single most common failure | run a few real tasks, then `tool-guardian --bypass-summary`; if it keeps bypassing, that model will not drive a router — see [Model requirement](#model-requirement-read-this-before-you-switch) |
 | Windows: the client reports `command not found` / the server never starts | `tool-guardian` is a script in a Scripts directory the client does not have on `PATH` | run `where tool-guardian` and put the full path in the client's `"command"`, or use `"command": "uvx", "args": ["tool-guardian", ...]` |
 | A server shows as `UNKNOWN` or `DOWN` in `list_capabilities` | the backend failed to start or died | the row now carries the backend's **own last stderr lines** (`-- its stderr: ...`): read them first, they usually name a missing token or a bad path. `tool-guardian-setup doctor` prints a `fix:` line per problem. A `DOWN` backend is retried once more after 60 s |
-| `config: ./mcp.json found but NOT loaded` on stderr | a config in the current directory is not loaded without consent (changed after 0.7.0) | if you meant to use it: `--config ./mcp.json`, or `TOOL_GUARDIAN_PROJECT_CONFIG=1`. If you did not, nothing is wrong — the file belongs to the directory you happen to be in |
+| `config: ./mcp.json found but NOT loaded` on stderr | a config in the current directory is not loaded without consent (0.8.0) | if you meant to use it: `--config ./mcp.json`, or `TOOL_GUARDIAN_PROJECT_CONFIG=1`. If you did not, nothing is wrong — the file belongs to the directory you happen to be in |
 | Zero backends although `~/.tool-guardian/mcp.json` has servers | some other config won the search | the startup log names the file that was loaded, and the `.env` beside it; `--config` or `$TOOL_GUARDIAN_CONFIG` overrides both |
 | `retrieve_spill failed: ... it may have been pruned (keep=500)` | the archive keeps the newest `keep` results and that id aged out | re-run the tool with `call_tool`; raise `"spillKeep"` in the config's `toolGuardian` block if it happens often |
-| A backend gets the literal text `${MY_TOKEN}` | you are on 0.7.0 or earlier, where only `args` were expanded | update: `env` values are expanded in the next release (an unset variable still stays literal, on purpose) |
+| A backend gets the literal text `${MY_TOKEN}` | you are on 0.7.0 or earlier, where only `args` were expanded | update to 0.8.0, where `env` values are expanded too (an unset variable still stays literal, on purpose) |
 
 ## Compatibility
 

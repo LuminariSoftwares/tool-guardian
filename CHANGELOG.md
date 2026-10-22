@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.8.0-beta.1 / PyPI tool-guardian 0.8.0 (2026-10-22)
 
 **External review fixes (2026-10-21 triage), each with a test that failed on `51e0a1e` first
 (`tests/test_review_1021.py`, `tests/test_tools_list_budget.py`):**

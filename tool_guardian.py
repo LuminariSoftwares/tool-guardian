@@ -103,7 +103,7 @@ tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
 tg_prove = _optional("tg_prove")      # --prove: three bundled prompts against a model endpoint
 
-__version__ = "0.7.0"  # keep equal to pyproject.toml version
+__version__ = "0.8.0"  # keep equal to pyproject.toml version
 
 PROTOCOL = "2024-11-05"
 SKILL_FILE = "SKILL.md"
@@ -410,7 +410,7 @@ def project_config_allowed() -> bool:
     """Whether a config in the CURRENT DIRECTORY may be loaded. Off by default: a
     checked-out repository can carry ./mcp.json or ./.mcp.json, and running the router
     inside it used to start that repository's servers with no approval from the client
-    (security fix after 0.7.0). --config and $TOOL_GUARDIAN_CONFIG name a file on purpose and
+    (security fix in 0.8.0). --config and $TOOL_GUARDIAN_CONFIG name a file on purpose and
     are unaffected -- this gates only the implicit cwd lookup."""
     return str(os.environ.get("TOOL_GUARDIAN_PROJECT_CONFIG", "")).strip() not in ("",) + _OFF
 

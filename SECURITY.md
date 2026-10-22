@@ -40,7 +40,7 @@ Two consequences worth stating plainly:
 
 - **Config files are executable input.** Adding a server is equivalent to running its command.
   Treat `~/.tool-guardian/mcp.json` as you would a shell script that also holds secrets.
-- **A config in the current directory is not loaded without consent** (changed after 0.7.0). A
+- **A config in the current directory is not loaded without consent** (0.8.0). A
   repository you cloned can carry `./mcp.json` or `./.mcp.json`; up to 0.7.0, starting the router in that
   directory launched that repository's servers, with no approval prompt from your client. Those
   paths are now used only when you name one (`--config`, `TOOL_GUARDIAN_CONFIG`) or set
