@@ -43,6 +43,16 @@ def notice(spill_id: str, original_chars: int, shown_chars: int) -> str:
     return f"[tool-guardian: showing {shown_chars} of {original_chars} chars. Full original archived as {spill_id} -- call retrieve_spill(id=\"{spill_id}\") to read it, or add grep=\"<regex>\" to search it.]"
 
 
+def make_private(path, mode: int) -> None:
+    """chmod *path* to *mode* (0o700 for a directory, 0o600 for a file). A no-op where
+    POSIX modes do not apply -- on Windows os.chmod only moves the read-only bit, and
+    failing to set a mode must never cost the caller its archive."""
+    try:
+        os.chmod(path, mode)
+    except (OSError, NotImplementedError):
+        pass
+
+
 class SpillStore:
     def __init__(self, root: str | os.PathLike | None = None, keep: int = 500):
         # root None -> default_root(). The directory is created on first save(), not here.
@@ -51,9 +61,12 @@ class SpillStore:
         self._created_dir = False
 
     def _ensure_dir(self):
-        """Create root directory if needed"""
+        """Create root directory if needed, readable by its owner only: an archived result
+        is a verbatim copy of whatever a backend returned -- repository contents, API
+        replies, tokens printed in an error -- so it is nobody else's business."""
         if not self._created_dir:
             self.root.mkdir(parents=True, exist_ok=True)
+            make_private(self.root, 0o700)
             self._created_dir = True
 
     def save(self, text: str, tool: str = "", rule: str = "") -> dict:
@@ -104,11 +117,14 @@ class SpillStore:
 
     @staticmethod
     def _write_atomic(path: pathlib.Path, content: str, newline) -> None:
-        """Write via a temp name + os.replace; the temp file is removed on failure."""
+        """Write via a temp name + os.replace; the temp file is removed on failure. The
+        mode is set on the temp file, before the rename, so the archive is never readable
+        by anyone else even briefly."""
         tmp = path.with_name(path.name + ".tmp")
         try:
             with open(tmp, 'w', encoding='utf-8', newline=newline) as f:
                 f.write(content)
+            make_private(tmp, 0o600)
             os.replace(tmp, path)
         except Exception:
             try:

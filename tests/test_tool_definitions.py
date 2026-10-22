@@ -41,20 +41,26 @@ def test_read_only_wording_matches_the_annotations(tmp_path):
         assert says_read_only == tool["annotations"]["readOnlyHint"], tool["name"]
 
 
-def test_every_parameter_has_type_description_and_example(tmp_path):
+def test_every_parameter_is_typed_documented_and_says_what_omitting_it_does(tmp_path):
+    """Documented, but not twice. A parameter is explained by exactly one of three things --
+    its own description, its `enum`, or the tool description naming it -- because a schema is
+    re-sent on every request and the 2026-10-21 pass paid for all three at once (an `examples`
+    on every parameter and a prose line restating the enum came to ~190 tokens of the 1,781
+    that tests/test_tools_list_budget.py now caps)."""
     for tool in _tools(tmp_path):
         schema = tool["inputSchema"]
         assert schema.get("type") == "object", tool["name"]
         required = set(schema.get("required", []))
         for pname, spec in schema.get("properties", {}).items():
             where = (tool["name"], pname)
-            assert len(spec.get("description", "")) >= 20, where
-            assert spec.get("examples") or spec.get("enum"), where  # an enum lists its own values
+            own = spec.get("description", "")
+            documented = len(own) >= 20 or "enum" in spec or re.search(r"\b%s\b" % pname, tool["description"])
+            assert documented, "%s.%s is explained nowhere" % where
             if where not in UNTYPED:
                 assert spec.get("type") in ("string", "integer", "number", "boolean", "object", "array"), where
             if pname not in required:
                 # Optional: either a schema default, or the description says what omitting it does.
-                assert "default" in spec or "mit" in spec["description"], where
+                assert "default" in spec or "mit" in own, where
             if "enum" in spec:
                 assert spec.get("default") in spec["enum"], where
 
@@ -84,22 +90,32 @@ def test_readme_tool_table_matches_the_schemas(tmp_path):
 
 
 def test_router_cost_is_pinned():
-    """Descriptions are paid for on every request. 1,478 is the cost with no backends after the
-    2026-10-21 rewrite; raising this number is a decision, write it in the CHANGELOG."""
-    assert tg.model_cost(tg.build_all_tools({})) <= 1500
+    """Descriptions are paid for on every request, so the ceiling is the payload a client really
+    receives -- `tools/list` entries with their titles and annotations -- not model_cost(), which
+    leaves both out and read 1,478 when the real payload was 1,781. Same ceiling as
+    tests/test_tools_list_budget.py, measured here without starting a process; raising either
+    number is a decision, write it in the CHANGELOG."""
+    tools = tg.build_all_tools({})
+    assert tg.est_tokens(tools) <= 1100, tg.est_tokens(tools)
+    # model_cost() stays meaningful (it is what --selftest reports) and must not drift past it.
+    assert tg.model_cost(tools) <= tg.est_tokens(tools)
 
 
 def test_no_backend_description_does_not_contradict_itself():
     """Glama (and any client started before a config exists) inspects the router with no backends.
     The 2026-10-15 score flagged "THESE SERVERS ARE AVAILABLE ...: none reachable" as an unresolved
-    template; with nothing live the description now just says so."""
+    template; with nothing live the description now just says so, in sentence case -- an upper-case
+    block with nothing to name is the stray template, not an instruction."""
     empty = tg.build_router_tools({})[0]["description"]
     assert "none reachable" not in empty and "THESE SERVERS ARE AVAILABLE" not in empty
     assert "No server is reachable yet" in empty
 
+    # With servers to name, the catalogue and its upper-case instruction stay: they were written
+    # for small local models and nothing has measured that removing them is safe (docs/adr/0002).
     class Live:
         status = "ok"
         def hint(self):
             return "git status/diff"
     named = tg.build_router_tools({"git": Live()})[0]["description"]
     assert "THESE SERVERS ARE AVAILABLE" in named and "git (git status/diff)" in named
+

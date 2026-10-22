@@ -1,6 +1,6 @@
 <h1 align="center">Tool Guardian</h1>
 
-<p align="center"><b>Seven MCP servers for 1,790 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
+<p align="center"><b>Seven MCP servers for 1,084 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
 
 <p align="center">For local models served by Ollama, LM Studio, vLLM or llama.cpp: the router never talks to the model backend, so any of them works when your client's model calls tools.</p>
 
@@ -40,7 +40,7 @@ Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-gua
 
 | | Without Tool Guardian | With it |
 |---|---|---|
-| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,790 tokens** (5 %); a schema is fetched only when the model asks |
+| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,084 tokens** (3 %); a schema is fetched only when the model asks |
 | A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
 | DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
 | A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
@@ -134,7 +134,7 @@ You have two ways to deal with that today, and both cost you something:
 | Load fewer MCP servers | You lose the capability entirely |
 | Live with it | Two-thirds of the window is gone before you type |
 
-Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just a handful of small tools plus a one-line catalogue of server names (1,790 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
+Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just a handful of small tools plus a one-line catalogue of server names (1,084 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
 
 ```
 list_capabilities(server?)      one line per tool — names and purpose
@@ -226,7 +226,7 @@ Key decisions, each with its trade-off (full records in [docs/adr/](docs/adr/)):
 |---|---|---|
 | Generic router tools, schemas on demand ([0001](docs/adr/0001-router-with-on-demand-discovery.md)) | 91 % fewer schema tokens on every request (bench) | every capability is 2–3 calls away; the model must choose to look |
 | Loud failure, named catalogue ([0002](docs/adr/0002-loud-failure-and-a-named-catalogue.md)) | a dead server is never mistaken for "no such tool" | the description grows a few tokens per server |
-| Descriptions budgeted and pinned ([0003](docs/adr/0003-descriptions-are-paid-on-every-request.md)) | tools a model can choose between without guessing | 1,478 tokens with no backends, pinned at ≤ 1,500 by a test |
+| Descriptions budgeted and pinned ([0003](docs/adr/0003-descriptions-are-paid-on-every-request.md)) | tools a model can choose between without guessing | 1,090 tokens of `tools/list` with no backends, pinned at ≤ 1,100 by a test |
 | Lenient inputs, strict backend checks ([0004](docs/adr/0004-lenient-inputs-strict-checks.md)) | small models' near-miss calls still work; impossible calls cost no round trip | schemas are looser than what the router enforces |
 | One stdlib Python core; DSH bundle is a bridge ([0005](docs/adr/0005-one-python-core-stdlib-only.md)) | installs anywhere; one router to fix | MCP stdio is hand-written; the npm package needs a Python |
 | Archive before shortening ([0006](docs/adr/0006-archive-before-shortening.md)) | big results stop flooding the window, nothing is lost | originals are kept on local disk |
@@ -294,7 +294,11 @@ Tool Guardian reads the **standard** `mcpServers` block (the same shape Claude D
 
 An optional per-server `"description"` enriches the catalogue the model sees. Without one, the hint is derived from that server's own tool names at startup.
 
-Config is searched in order: `--config PATH`, `$TOOL_GUARDIAN_CONFIG`, `./mcp.json`, `./.mcp.json`, `~/.tool-guardian/mcp.json`.
+Config is searched in order: `--config PATH`, `$TOOL_GUARDIAN_CONFIG`, `~/.tool-guardian/mcp.json`. Whichever file is used is printed to stderr at startup, with the `.env` that was loaded beside it.
+
+**A config in the current directory needs your say-so.** `./mcp.json` and `./.mcp.json` are *not* loaded automatically. A repository you cloned can carry one, and before 0.7.1 starting the router inside that directory launched its servers — with no approval prompt from your client. When one is found and skipped you get a single stderr line naming it and the opt-in; to use it, pass `--config ./mcp.json`, set `TOOL_GUARDIAN_CONFIG=./mcp.json`, or set `TOOL_GUARDIAN_PROJECT_CONFIG=1`.
+
+A `./.mcp.json` whose only server is tool-guardian itself (what the Claude Code setup below writes, to register the router with the client) is never treated as the router's own config: it is skipped and the search carries on to `~/.tool-guardian/mcp.json`.
 
 ## Environment and `.env`
 
@@ -339,11 +343,19 @@ launches it.
   per-server listings total 9,582 characters with `small` against 16,274 without.
 
 - **Variable expansion.** `${VAR}`, `$VAR` and `%VAR%` are expanded in each
-  backend's `args` from the environment; unknown variables are left as-is.
+  backend's `args` **and in its `env` values** from the environment; unknown
+  variables are left as-is, so the backend's own error names the one you missed.
   Keep a secret in `.env` and reference it in a backend arg:
 
       "args": ["-y", "mcp-remote", "https://app.openseo.so/mcp",
                "--header", "Authorization: Bearer ${OPENSEO_API_KEY}"]
+
+  or in a backend's environment:
+
+      "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
+
+  (Before 0.7.1 only `args` were expanded, so an `env` value like that reached
+  the server as the literal text `${GITHUB_TOKEN}`.)
 
 ## Run
 
@@ -398,7 +410,7 @@ handshake. A second failure within 60 s marks the backend `DOWN` and it is not r
 tool-guardian --selftest
 ```
 
-Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. with one filesystem server behind it: *"router tools cost ~1482 tokens vs ~3943 for the full set behind them -> ~2461 tokens freed on every request (62% smaller)"*. One small server is close to break-even; the saving grows with every server added. Below the totals it prints one `[server] N tools, ~M tokens` line per server, and it exits non-zero if any configured server failed to start. It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
+Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. with one filesystem server behind it: *"router tools cost ~840 tokens vs ~3943 for the full set behind them -> ~3103 tokens freed on every request (79% smaller)"*. One small server is close to break-even; the saving grows with every server added. Below the totals it prints one `[server] N tools, ~M tokens` line per server, and it exits non-zero if any configured server failed to start. It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
 
 Token counts use `tiktoken` (cl100k_base) when it is importable and the characters ÷ 3.5 estimate otherwise; the report prints which, e.g. `token counts: estimate (chars / 3.5; tiktoken not available)`. `pip install tiktoken` switches it; nothing else needs it.
 
@@ -453,7 +465,7 @@ Reproduce it yourself: `python bench/bench_tokens.py` (no network, no model; `--
 | sequential-thinking | 1 | 1,185 |
 | **all seven** | **95** | **20,005** |
 
-**Every request:** 20,005 tokens of tool schemas without tool-guardian, 1,790 with it (**91.1 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 5 % full. (Before 2026-10-21 the router's descriptions were terser and this was 1,209; [ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md) records why they grew.)
+**Every request:** 20,005 tokens of tool schemas without tool-guardian, 1,084 with it (**94.6 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 3 % full. (The 2026-10-21 description rewrite had pushed this to 1,790; [ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md) records the budget that brought it back.)
 
 The output ladder on four typical tool results:
 
