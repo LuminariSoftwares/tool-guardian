@@ -64,9 +64,11 @@ def test_a_project_config_is_used_when_opted_in(project, monkeypatch):
     assert set(tg.load_backends()) == {"evil"}
 
 
-def test_naming_a_project_config_explicitly_is_consent(project):
+def test_naming_a_project_config_explicitly_is_consent(project, capsys):
     _write(project / "mcp.json", ONE_SERVER)
     assert set(tg.load_backends("mcp.json")) == {"evil"}
+    # and it is not ALSO reported as skipped: the log would contradict itself one line later.
+    assert "NOT loaded" not in capsys.readouterr().err
 
 
 def test_a_self_only_project_config_does_not_shadow_the_home_config(project, monkeypatch):

@@ -410,7 +410,7 @@ def project_config_allowed() -> bool:
     """Whether a config in the CURRENT DIRECTORY may be loaded. Off by default: a
     checked-out repository can carry ./mcp.json or ./.mcp.json, and running the router
     inside it used to start that repository's servers with no approval from the client
-    (0.7.1 security fix). --config and $TOOL_GUARDIAN_CONFIG name a file on purpose and
+    (security fix after 0.7.0). --config and $TOOL_GUARDIAN_CONFIG name a file on purpose and
     are unaffected -- this gates only the implicit cwd lookup."""
     return str(os.environ.get("TOOL_GUARDIAN_PROJECT_CONFIG", "")).strip() not in ("",) + _OFF
 
@@ -436,11 +436,27 @@ def _config_search_order(explicit: str = "") -> list:
     return [path for path, _ in _config_candidates(explicit)]
 
 
-def _skipped_project_configs() -> list:
-    """Paths in the current directory that WOULD have been loaded before 0.7.1."""
+def _skipped_project_configs(explicit: str = "") -> list:
+    """Paths in the current directory that WOULD have been loaded up to 0.7.0 -- except any the
+    caller named itself, since `--config ./mcp.json` IS the consent and reporting it as skipped
+    while loading it would contradict the next line of the log."""
     if project_config_allowed():
         return []
-    return [p for p in (Path(n) for n in PROJECT_CONFIG_NAMES) if p.is_file()]
+    named = set()
+    for path in _config_candidates(explicit):
+        try:
+            named.add(path[0].resolve())
+        except OSError:
+            continue
+    out = []
+    for name in PROJECT_CONFIG_NAMES:
+        path = Path(name)
+        try:
+            if path.is_file() and path.resolve() not in named:
+                out.append(path)
+        except OSError:
+            continue
+    return out
 
 
 def _is_self(spec) -> bool:
@@ -469,7 +485,7 @@ def _backends_of(data: dict) -> dict:
 def load_backends(explicit: str = "") -> dict:
     """Return {name: spec} from the first config file found. spec is the standard
     MCP server object: command, args, env, optional description/url."""
-    for path in _skipped_project_configs():
+    for path in _skipped_project_configs(explicit):
         log("config: %s found but NOT loaded -- a project config needs consent; to use "
             "it, %s" % (path, PROJECT_OPT_IN))
     for path, is_project in _config_candidates(explicit):
@@ -486,9 +502,10 @@ def load_backends(explicit: str = "") -> dict:
                 return servers
         except Exception as exc:  # noqa: BLE001
             log("config %s unreadable: %s" % (path, exc))
-    log("no config found (looked for %s / $TOOL_GUARDIAN_CONFIG / --config / "
-        "~/.tool-guardian/mcp.json). Running with no backends."
-        % " / ".join(PROJECT_CONFIG_NAMES))
+    looked = "--config / $TOOL_GUARDIAN_CONFIG / ~/.tool-guardian/mcp.json"
+    if project_config_allowed():
+        looked += " / " + " / ".join("./" + n for n in PROJECT_CONFIG_NAMES)
+    log("no config found (looked for %s). Running with no backends." % looked)
     return {}
 
 
@@ -883,7 +900,7 @@ class Backend:
         args = self.spec.get("args") or []
         if tg_env is not None:
             # `env` values take ${VAR} the same way `args` do: the README's own
-            # `--env GITHUB_TOKEN='${GITHUB_TOKEN}'` passed the literal text before 0.7.1.
+            # `--env GITHUB_TOKEN='${GITHUB_TOKEN}'` passed the literal text up to 0.7.0.
             # An unset variable stays literal, exactly as for args.
             args = tg_env.expand_args(args)
             keys = sorted(values)

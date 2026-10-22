@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+**External review fixes (2026-10-21 triage), each with a test that failed on `51e0a1e` first
+(`tests/test_review_1021.py`, `tests/test_tools_list_budget.py`):**
+
+- **Breaking: a config in the CURRENT DIRECTORY is no longer loaded implicitly.** `./mcp.json` and
+  `./.mcp.json` used to be searched before `~/.tool-guardian/mcp.json`, so starting the router inside a
+  repository you had cloned launched *that repository's* MCP servers, with no approval prompt from your
+  client. They are now used only when you name one — **migration: set `TOOL_GUARDIAN_PROJECT_CONFIG=1`
+  or pass `--config ./mcp.json`** (`TOOL_GUARDIAN_CONFIG` works too). A skipped one prints a single
+  stderr line with its path and the opt-in. `--config` and `$TOOL_GUARDIAN_CONFIG` are unchanged.
+- A cwd `.mcp.json` whose only server is tool-guardian itself — what the documented Claude Code step
+  writes, to register the router *with the client* — no longer shadows `~/.tool-guardian/mcp.json`. That
+  combination used to leave the router with zero backends. New `examples/claude-code/README.md` says
+  which file is whose.
+- The config file and the `.env` that were actually loaded are always logged to stderr at startup.
+- **Router token budget.** The 2026-10-21 description pass measured `model_cost()`, which leaves out
+  `title` and `annotations` by design and read 1,478 when the payload a client receives was **1,781
+  tokens** of `tools/list` (0.7.0: 986). The descriptions return to the 0.7.0 shape — the four things
+  each one must say, in about a clause each — plus only what was genuinely missing: what
+  `describe_tool`'s `server`/`tool` accept and what an unknown name returns, and what an unknown or
+  pruned `retrieve_spill` id returns. Per-parameter `examples` are gone (~190 tokens on every request
+  for what the descriptions already said), and a parameter is explained exactly once: by its own
+  description, its `enum`, or the tool description naming it. **Measured: `tools/list` 1,781 → 1,090
+  tokens; the seven-server bench 1,790 → 1,084 (20,005 → 1,084, 94.6 % less).** `tools/list` is now
+  capped at 1,100 by `tests/test_tools_list_budget.py`, which starts the real server over stdio;
+  `tests/test_tool_definitions.py` pins the same number in-process (it used to pin the understated
+  `model_cost()` at 1,500). Tool names, arguments, annotations and behaviour are unchanged.
+  [ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md) has the amendment.
+- **Fix: `${VAR}` is expanded in a backend's `env` values**, not only its `args` — the README's own
+  `tool-guardian-setup add github --env GITHUB_TOKEN='${GITHUB_TOKEN}'` passed the literal text. An
+  unset variable still stays literal, as for `args`, so the backend's error names it.
+- **Fix: a crashed backend keeps its own error.** Backends ran with `stderr=DEVNULL`, so a server that
+  printed `FATAL: GITHUB_TOKEN is not set` and exited reached the user as `BrokenPipeError`. Its last
+  20 stderr lines are kept in a ring buffer and appended to the `UNKNOWN`/`DOWN` error text, so they
+  show up in `list_capabilities`, `search_capabilities`, `call_tool` and `--selftest`.
+- **Fix: an unknown JSON-RPC method answers `-32601`** instead of `{"result": {}}`, so a client probing
+  the stateless 2026-07-28 revision's `server/discover` gets "method not found" and falls back.
+- **Fix: a JSON array, string or number on stdin answers `-32600` and the session survives.** Such a
+  line used to raise `AttributeError: 'list' object has no attribute 'get'` and end the router.
+- `sys.stdin` is reconfigured to UTF-8 in both `serve()` and the hook: MCP stdio is UTF-8 whatever the
+  Windows console code page is, and non-ASCII arguments arrived as mojibake.
+- **Fix: a `DOWN` backend can come back.** Two bad calls within 60 s marked it `DOWN` for the whole
+  session, however long that session ran. Once the window has passed it gets one more respawn attempt
+  with backoff; the status names and the error text are unchanged.
+- The spill directory is `0700` and spill files are `0600`; `calls.jsonl` is `0600` (`mcp.json` and
+  `state.json` already were). No-op on Windows, where POSIX modes do not apply.
+- `retrieve_spill` on an unknown id keeps its `retrieve_spill failed:` prefix and adds that it may have
+  been pruned, with the archive's `keep` value; the `keep` setting is documented for plain MCP users.
+- **Docs.** Quick start leads with `uvx tool-guardian` (nothing installed; the filesystem example still
+  needs Node). New: a real `list_capabilities` → `describe_tool` → `call_tool` transcript, a "When *not*
+  to use the router" section, a troubleshooting table, a guardian-family paragraph linking the other
+  three, and the protocol stated plainly (MCP `2024-11-05`, hand-written, no SDK).
+  `docs/first-5-minutes.md` no longer tells you PyPI is stuck on 0.1.0. `SECURITY.md` gains "backends
+  are trusted code" and "what leaves the machine" (one update check a day, off with
+  `GUARDIAN_NO_UPDATE_CHECK=1`, `NO_UPDATE_NOTIFIER=1` or `CI`).
+- **CI.** Adds Python 3.10, 3.12 and 3.13 on Ubuntu (every supported version is now run) and a job that
+  builds the Dockerfile and speaks MCP to the image over stdio. Third-party actions are pinned to
+  commit SHAs. Existing job names are unchanged.
+- PyPI summary said "four small generic tools"; there are six.
+
 - `Dockerfile` runs as a non-root user `guardian` (uid 10001); mount config at `/home/guardian/.tool-guardian`.
 - Fix: `tool-guardian-setup` recognises a scoped npm package (`npx -y @scope/tool-guardian`,
   `@scope/dsh-tool-guardian@0.6.0`) as tool-guardian itself; folder paths still do not match.
