@@ -47,7 +47,7 @@ dsh web
 Open a **new** session and type `/toolguardian`. It prints a report shaped like this one. The numbers are illustrative; yours shows your own servers:
 
 ```
-tool-guardian 0.7.0-beta.1 (router 0.7.0, python 3.11.9)
+tool-guardian 0.8.0-beta.1 (router 0.8.0, python 3.11.9)
 backends: 2 up, 0 down
   files              ok           14 tools
   git                ok           12 tools
@@ -56,7 +56,7 @@ behind the router: 26 tools, ~6,900 tokens of schemas -> ~6,040 tokens freed on 
 active groups: none (activate_group loads one)
 output ladder: on -- 0 results shaped, 0 archived, 0 -> 0 chars since load
 bypass watch: nudge -- 0 shell calls did a router tool's job this session (/toolguardian bypass)
-update: none -- 0.7.0-beta.1 is the newest
+update: none -- 0.8.0-beta.1 is the newest
 
 This proves the saving and that the backends start. It does NOT prove your model will call the router:
 run a few real tasks, then /toolguardian bypass shows whether it did.
@@ -95,7 +95,7 @@ uvx tool-guardian --version      # runs the published PyPI release, nothing inst
 ```
 
 Prefer it on `PATH`? `pip install tool-guardian`. Either way you get the current PyPI release
-(0.7.0 at the time of writing); drop the `uvx` prefix from the commands below if you installed it.
+(0.8.0 at the time of writing); drop the `uvx` prefix from the commands below if you installed it.
 
 **2. Copy your servers in and check them.**
 
