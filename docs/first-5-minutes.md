@@ -47,16 +47,16 @@ dsh web
 Open a **new** session and type `/toolguardian`. It prints a report shaped like this one. The numbers are illustrative; yours shows your own servers:
 
 ```
-tool-guardian 0.3.0-alpha.5 (router 0.3.0, python 3.11.9)
+tool-guardian 0.7.0-beta.1 (router 0.7.0, python 3.11.9)
 backends: 2 up, 0 down
-  files              ok           9 tools
+  files              ok           14 tools
   git                ok           12 tools
-router tools: 8 native tools; the router's own schemas cost ~540 tokens on every request
-behind the router: 21 tools, ~6,900 tokens of schemas -> ~6,360 tokens freed on every request (92% smaller)
+router tools: 8 native tools; the router's own schemas cost ~860 tokens on every request
+behind the router: 26 tools, ~6,900 tokens of schemas -> ~6,040 tokens freed on every request (88% smaller)
 active groups: none (activate_group loads one)
 output ladder: on -- 0 results shaped, 0 archived, 0 -> 0 chars since load
 bypass watch: nudge -- 0 shell calls did a router tool's job this session (/toolguardian bypass)
-update: none -- 0.3.0-alpha.5 is the newest
+update: none -- 0.7.0-beta.1 is the newest
 
 This proves the saving and that the backends start. It does NOT prove your model will call the router:
 run a few real tasks, then /toolguardian bypass shows whether it did.
@@ -88,30 +88,43 @@ In `nudge` mode (the default) the model sees the same line under the shell resul
 
 ## Path B: Claude Code (or any MCP client)
 
-**1. Install.**
+**1. Install — or don't.**
 
 ```bash
-pip install tool-guardian
+uvx tool-guardian --version      # runs the published PyPI release, nothing installed
 ```
 
-> PyPI currently has 0.1.0, which lacks setup, groups and the output ladder. Until 0.3 is published there, install from GitHub:
-> `pip install "tool-guardian @ git+https://github.com/LuminariSoftwares/tool-guardian"`
+Prefer it on `PATH`? `pip install tool-guardian`. Either way you get the current PyPI release
+(0.7.0 at the time of writing); drop the `uvx` prefix from the commands below if you installed it.
 
 **2. Copy your servers in and check them.**
 
 ```bash
-tool-guardian-setup import      # asks before writing ~/.tool-guardian/mcp.json
-tool-guardian-setup doctor      # ends with an "update:" line
-tool-guardian --selftest        # starts the servers and prints the token saving, then an "update:" line
+uvx --from tool-guardian tool-guardian-setup import   # asks before writing ~/.tool-guardian/mcp.json
+uvx --from tool-guardian tool-guardian-setup doctor   # ends with an "update:" line
+uvx tool-guardian --selftest                          # starts the servers, prints the token saving and the config it used
 ```
+
+`--selftest` prints to stderr which config file and which `.env` it loaded, then the arithmetic
+for your servers: `router tools cost ~N tokens vs ~M for the full set behind them`. A server that
+did not start shows `UNKNOWN` or `DOWN` with the backend's **own last stderr lines**, which is
+usually the whole diagnosis.
 
 **3. Point Claude Code at the router, and only the router.**
 
 ```bash
-claude mcp add tool-guardian -- tool-guardian
+claude mcp add --scope user tool-guardian -- uvx tool-guardian
 ```
 
 Then remove the servers you imported from Claude Code's own config, or they load twice.
+
+> **If you register the router per project instead** — by copying
+> [`examples/claude-code/project.mcp.json`](../examples/claude-code/project.mcp.json) to `.mcp.json`
+> so Claude Code asks once to approve it — that file is the *client's* config, not the router's.
+> The router does not read `./mcp.json` or `./.mcp.json` unless you point it at one
+> (`--config`, `TOOL_GUARDIAN_CONFIG`, or `TOOL_GUARDIAN_PROJECT_CONFIG=1`): a repository you
+> cloned can carry one, and its servers are not yours to start. It keeps reading
+> `~/.tool-guardian/mcp.json`, which is where `import` and `add` write.
 
 **4. Optional: bypass detection.** A plain MCP server only sees calls made *to* it. It cannot see Claude Code's own `Bash` calls, so on its own it can only tell you:
 - that a session **never called the router** (it logs a `session` row when the client connects);

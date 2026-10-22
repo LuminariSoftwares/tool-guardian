@@ -429,13 +429,28 @@ def _default_log_path():
     return os.environ.get("TOOL_GUARDIAN_CALL_LOG", str(Path.home() / ".tool-guardian" / "calls.jsonl"))
 
 
+def make_private(path, mode: int) -> None:
+    """chmod *path* to *mode* (0o700 for a directory, 0o600 for a file). Best effort and
+    never raises: on Windows os.chmod only moves the read-only bit, and a mode that cannot
+    be set must not cost the caller the write."""
+    try:
+        os.chmod(path, mode)
+    except (OSError, NotImplementedError):
+        pass
+
+
 def _append_call_log(log_path, row):
+    """Append one row. The log records which tools ran, with what keys and on which
+    server, so it is owner-only like the config beside it."""
     if not log_path:
         return
     directory = os.path.dirname(log_path) or "."
     try:
         os.makedirs(directory, exist_ok=True)
+        new_file = not os.path.exists(log_path)
         with open(log_path, "a", encoding="utf-8", newline="") as handle:
+            if new_file:
+                make_private(log_path, 0o600)
             handle.write(json.dumps(row) + "\n")
     except (OSError, TypeError, ValueError):
         pass

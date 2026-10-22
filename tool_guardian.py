@@ -25,8 +25,9 @@ WHY THIS EXISTS
     them or not. A handful of servers routinely comes to tens of thousands of
     tokens -- most of a small local model's context window -- before the first
     user message. Loading fewer servers trades capability for room. This trades
-    neither: the model sees the router tools (about 1,500 tokens, measured by
-    --selftest) and the full catalogue only when it asks. Same progressive-disclosure idea as a search index --
+    neither: the model sees the router tools (about 1,100 tokens of tools/list,
+    measured by --selftest and capped by a test) and the full catalogue only when
+    it asks. Same progressive-disclosure idea as a search index --
     cheap catalogue first, detail on demand.
 
     Companion to Context Guardian (https://pypi.org/project/context-guardian/):
@@ -52,8 +53,11 @@ CONFIG
 
     An optional per-server "description" enriches the catalogue the model sees;
     without it, the hint is derived from the server's own tool names at startup.
-    Searched in order: --config PATH, $TOOL_GUARDIAN_CONFIG, ./mcp.json,
-    ./.mcp.json, ~/.tool-guardian/mcp.json.
+    Searched in order: --config PATH, $TOOL_GUARDIAN_CONFIG,
+    ~/.tool-guardian/mcp.json. A config in the CURRENT DIRECTORY (./mcp.json,
+    ./.mcp.json) is loaded only with TOOL_GUARDIAN_PROJECT_CONFIG=1, because a
+    cloned repository can carry one and its servers would run unapproved; when one
+    is found and skipped, the reason and the opt-in go to stderr.
 
     stdio servers only for now. An HTTP/SSE server (a "url" entry) is reported
     UNSUPPORTED -- load it directly rather than through here.
@@ -149,6 +153,16 @@ def read_tunables() -> None:
 
 
 read_tunables()
+
+
+def make_private(path, mode: int) -> None:
+    """chmod *path* to *mode* (0o700 for a directory, 0o600 for a file). Best effort and
+    never raises: on Windows os.chmod only moves the read-only bit, and a mode that cannot
+    be set must not cost the caller the write."""
+    try:
+        os.chmod(path, mode)
+    except (OSError, NotImplementedError):
+        pass
 
 
 def log(msg: str) -> None:
@@ -387,36 +401,111 @@ def skills_report(skills):
     return 0
 
 
-def _config_search_order(explicit: str = "") -> list:
+PROJECT_CONFIG_NAMES = ("mcp.json", ".mcp.json")
+PROJECT_OPT_IN = ("set TOOL_GUARDIAN_PROJECT_CONFIG=1, or pass "
+                  "--config <path> / TOOL_GUARDIAN_CONFIG=<path>")
+
+
+def project_config_allowed() -> bool:
+    """Whether a config in the CURRENT DIRECTORY may be loaded. Off by default: a
+    checked-out repository can carry ./mcp.json or ./.mcp.json, and running the router
+    inside it used to start that repository's servers with no approval from the client
+    (security fix after 0.7.0). --config and $TOOL_GUARDIAN_CONFIG name a file on purpose and
+    are unaffected -- this gates only the implicit cwd lookup."""
+    return str(os.environ.get("TOOL_GUARDIAN_PROJECT_CONFIG", "")).strip() not in ("",) + _OFF
+
+
+def _config_candidates(explicit: str = "") -> list:
+    """[(path, is_project)] in search order. A project path is one found implicitly in the
+    current directory; it is only in the list when project_config_allowed()."""
     order = []
     if explicit:
-        order.append(Path(explicit))
+        order.append((Path(explicit), False))
     env = os.environ.get("TOOL_GUARDIAN_CONFIG", "").strip()
     if env:
-        order.append(Path(env))
-    order += [Path("mcp.json"), Path(".mcp.json"),
-              Path.home() / ".tool-guardian" / "mcp.json"]
+        order.append((Path(env), False))
+    if project_config_allowed():
+        order += [(Path(n), True) for n in PROJECT_CONFIG_NAMES]
+    order.append((Path.home() / ".tool-guardian" / "mcp.json", False))
     return order
+
+
+def _config_search_order(explicit: str = "") -> list:
+    """The candidate paths alone, in search order. tg_setup's `doctor` and `target_config`
+    read it to name the very file the router will load."""
+    return [path for path, _ in _config_candidates(explicit)]
+
+
+def _skipped_project_configs(explicit: str = "") -> list:
+    """Paths in the current directory that WOULD have been loaded up to 0.7.0 -- except any the
+    caller named itself, since `--config ./mcp.json` IS the consent and reporting it as skipped
+    while loading it would contradict the next line of the log."""
+    if project_config_allowed():
+        return []
+    named = set()
+    for path in _config_candidates(explicit):
+        try:
+            named.add(path[0].resolve())
+        except OSError:
+            continue
+    out = []
+    for name in PROJECT_CONFIG_NAMES:
+        path = Path(name)
+        try:
+            if path.is_file() and path.resolve() not in named:
+                out.append(path)
+        except OSError:
+            continue
+    return out
+
+
+def _is_self(spec) -> bool:
+    """True when this server entry is tool-guardian itself. tg_setup owns the real test;
+    it imports this module, so the import is local to keep the cycle out of startup."""
+    try:
+        import tg_setup
+        return bool(tg_setup.is_self(spec))
+    except Exception:  # noqa: BLE001  (tg_setup.py may not be beside this file)
+        return False
+
+
+def _backends_of(data: dict) -> dict:
+    """The routable servers in one parsed config: `mcpServers`/`servers`, minus every
+    entry that is tool-guardian itself (we never front ourselves)."""
+    servers = data.get("mcpServers") or data.get("servers") or {}
+    if not isinstance(servers, dict):
+        raise ValueError("`mcpServers` is not an object")
+    servers = dict(servers)
+    for name in list(servers):
+        if name in ("tool-guardian", "router") or _is_self(servers[name]):
+            servers.pop(name)
+    return servers
 
 
 def load_backends(explicit: str = "") -> dict:
     """Return {name: spec} from the first config file found. spec is the standard
     MCP server object: command, args, env, optional description/url."""
-    for path in _config_search_order(explicit):
+    for path in _skipped_project_configs(explicit):
+        log("config: %s found but NOT loaded -- a project config needs consent; to use "
+            "it, %s" % (path, PROJECT_OPT_IN))
+    for path, is_project in _config_candidates(explicit):
         try:
             if path.is_file():
-                data = json.loads(path.read_text(encoding="utf-8"))
-                servers = data.get("mcpServers") or data.get("servers") or {}
-                if not isinstance(servers, dict):
-                    raise ValueError("`mcpServers` is not an object")
+                servers = _backends_of(json.loads(path.read_text(encoding="utf-8")))
+                if is_project and not servers:
+                    # The documented Claude Code step copies a .mcp.json whose only server
+                    # is tool-guardian; that must not shadow ~/.tool-guardian/mcp.json.
+                    log("config: %s names no backend but tool-guardian itself -- "
+                        "looking further" % path)
+                    continue
                 log("config: %d server(s) from %s" % (len(servers), path))
-                servers.pop("tool-guardian", None)  # never front ourselves
-                servers.pop("router", None)
                 return servers
         except Exception as exc:  # noqa: BLE001
             log("config %s unreadable: %s" % (path, exc))
-    log("no config found (looked for mcp.json / .mcp.json / "
-        "$TOOL_GUARDIAN_CONFIG / --config). Running with no backends.")
+    looked = "--config / $TOOL_GUARDIAN_CONFIG / ~/.tool-guardian/mcp.json"
+    if project_config_allowed():
+        looked += " / " + " / ".join("./" + n for n in PROJECT_CONFIG_NAMES)
+    log("no config found (looked for %s). Running with no backends." % looked)
     return {}
 
 
@@ -424,10 +513,12 @@ def load_options(explicit: str = "") -> dict:
     """The optional `toolGuardian` block beside `mcpServers` in the same config
     file: {"ladder": {...tg_ladder.DEFAULTS overrides}, "groups": {group: [selectors]}}.
     Absent or unreadable -> {} (defaults everywhere)."""
-    for path in _config_search_order(explicit):
+    for path, is_project in _config_candidates(explicit):
         try:
             if path.is_file():
                 data = json.loads(path.read_text(encoding="utf-8"))
+                if is_project and not _backends_of(data) and not data.get("toolGuardian"):
+                    continue  # the same self-only fall-through as load_backends
                 opts = data.get("toolGuardian") or {}
                 return opts if isinstance(opts, dict) else {}
         except Exception:  # noqa: BLE001  (load_backends already logged the reason)
@@ -626,6 +717,7 @@ def _check_value(spec, value, where, problems):
 
 RESPAWN_BACKOFF = (1.0, 5.0)   # seconds before the first respawn, then before every later one
 RESPAWN_WINDOW = 60.0          # a second failure within this many seconds marks the backend DOWN
+STDERR_KEEP = 20               # lines of a backend's own stderr kept for its error text
 
 
 def _backoff_sleep(seconds: float) -> None:
@@ -656,6 +748,10 @@ class Backend:
         self.respawns = 0
         self._failures = []
         self._respawn_due = None
+        self._down_at = None
+        # The backend's own stderr, last STDERR_KEEP lines. Without it a server that
+        # printed "missing GITHUB_TOKEN" and exited reached the user as BrokenPipeError.
+        self._stderr = collections.deque(maxlen=STDERR_KEEP)
 
     def _send(self, obj) -> None:
         self.proc.stdin.write(json.dumps(obj) + "\n")
@@ -671,6 +767,26 @@ class Backend:
         except (OSError, ValueError):
             pass
         q.put(None)
+
+    def _read_stderr(self, proc) -> None:
+        """One thread per backend draining stderr into the ring buffer. Draining it is not
+        optional: with stderr=PIPE and nobody reading, a chatty server fills the pipe and
+        blocks. Windows-safe -- a thread and a blocking read, no select()."""
+        try:
+            for line in proc.stderr:
+                line = line.rstrip("\r\n")
+                if line.strip():
+                    self._stderr.append(line)
+        except (OSError, ValueError):
+            pass
+
+    def stderr_tail(self) -> str:
+        """The backend's last stderr lines, ready to append to an error message, or ""
+        when it printed nothing. Kept short: this text is shown to a model."""
+        lines = list(self._stderr)
+        if not lines:
+            return ""
+        return " -- its stderr: " + " | ".join(line[:200] for line in lines[-STDERR_KEEP:])
 
     def _await(self, want_id: int, timeout: float):
         """Read until the reply with this id. Servers emit notifications and log
@@ -721,14 +837,18 @@ class Backend:
 
     def _failed(self, why: str) -> None:
         """A started backend exited or stopped answering. The first failure schedules one
-        respawn after RESPAWN_BACKOFF; a second inside RESPAWN_WINDOW marks it DOWN for good."""
+        respawn after RESPAWN_BACKOFF; a second inside RESPAWN_WINDOW marks it DOWN, and
+        _revive() allows one more attempt once the window has passed."""
         now = time.monotonic()
         self._failures = [t for t in self._failures if now - t < RESPAWN_WINDOW] + [now]
+        tail = self.stderr_tail()
         self.stop()
         if len(self._failures) >= 2:
             self._respawn_due = None
+            self._down_at = now
             self.status = "DOWN"
-            self.error = "%s; second failure within %gs, not restarted again" % (why, RESPAWN_WINDOW)
+            self.error = ("%s; second failure within %gs, not restarted again"
+                          % (why, RESPAWN_WINDOW)) + tail
             log("backend %s: DOWN -- %s" % (self.name, self.error))
             return
         wait = RESPAWN_BACKOFF[min(self.respawns, len(RESPAWN_BACKOFF) - 1)]
@@ -736,11 +856,23 @@ class Backend:
         log("backend %s: %s -- respawning in %gs" % (self.name, why, wait))
 
     def _revive(self) -> None:
-        """Before a call: notice a process that died between calls, and run a scheduled
-        respawn (after its backoff), which re-sends the whole initialize handshake."""
+        """Before a call: notice a process that died between calls, run a scheduled respawn
+        (after its backoff), which re-sends the whole initialize handshake, and give a DOWN
+        backend one more attempt once RESPAWN_WINDOW has passed since it went down. Two bad
+        calls in a minute used to end a server for the rest of the session, however long
+        that was, and a backend whose dependency came back had no way back in."""
         if (self.status == "ok" and self._respawn_due is None
                 and self.proc is not None and self.proc.poll() is not None):
             self._failed("process exited (code %s)" % self.proc.returncode)
+        if (self.status == "DOWN" and self._respawn_due is None and self._down_at is not None
+                and time.monotonic() - self._down_at >= RESPAWN_WINDOW):
+            self._down_at = None
+            # One attempt: keep a failure on the clock so a respawn that fails goes
+            # straight back to DOWN instead of looping through the backoff.
+            self._failures = [time.monotonic()]
+            self._respawn_due = time.monotonic() + RESPAWN_BACKOFF[-1]
+            log("backend %s: DOWN for %gs -- one more respawn attempt in %gs"
+                % (self.name, RESPAWN_WINDOW, RESPAWN_BACKOFF[-1]))
         if self._respawn_due is None:
             return
         _backoff_sleep(max(0.0, self._respawn_due - time.monotonic()))
@@ -748,6 +880,7 @@ class Backend:
         self.respawns += 1
         self.stats["backend_respawns"] = self.stats.get("backend_respawns", 0) + 1
         self._lines = queue.Queue()
+        self._stderr.clear()
         self.status, self.error = "respawning", ""
         self.start()
         if self.status != "ok":
@@ -763,22 +896,30 @@ class Backend:
         if not command:
             self.status, self.error = "UNKNOWN", "no `command` in config"
             return
-        env = dict(os.environ)
-        env.update({k: str(v) for k, v in (self.spec.get("env") or {}).items()})
+        values = {k: str(v) for k, v in (self.spec.get("env") or {}).items()}
         args = self.spec.get("args") or []
         if tg_env is not None:
+            # `env` values take ${VAR} the same way `args` do: the README's own
+            # `--env GITHUB_TOKEN='${GITHUB_TOKEN}'` passed the literal text up to 0.7.0.
+            # An unset variable stays literal, exactly as for args.
             args = tg_env.expand_args(args)
+            keys = sorted(values)
+            values = dict(zip(keys, tg_env.expand_args([values[k] for k in keys])))
+        env = dict(os.environ)
+        env.update(values)
         cmd = [command, *args]
         try:
             self.proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, env=env, text=True,
+                stderr=subprocess.PIPE, env=env, text=True,
                 encoding="utf-8", errors="replace", bufsize=1)
         except Exception as exc:  # noqa: BLE001
             self.status, self.error = "UNKNOWN", "could not start: %s" % exc
             return
         threading.Thread(target=self._read_stdout, args=(self.proc, self._lines),
                          name="tg-read-" + self.name, daemon=True).start()
+        threading.Thread(target=self._read_stderr, args=(self.proc,),
+                         name="tg-err-" + self.name, daemon=True).start()
         # One deadline for the whole handshake: START_TIMEOUT bounds start, not each reply.
         deadline = time.monotonic() + START_TIMEOUT
         try:
@@ -804,6 +945,7 @@ class Backend:
             if isinstance(exc, TimeoutError):
                 self.error += " (TOOL_GUARDIAN_START_TIMEOUT); backend stopped"
                 self.stop()
+            self.error += self.stderr_tail()
             log("backend %s: %s -- %s" % (self.name, self.status, self.error))
 
     def hint(self) -> str:
@@ -1144,7 +1286,10 @@ class Router:
             row["session"] = self.session_id
         try:
             os.makedirs(os.path.dirname(CALL_LOG) or ".", exist_ok=True)
+            new_file = not os.path.exists(CALL_LOG)
             with open(CALL_LOG, "a", encoding="utf-8") as fh:
+                if new_file:  # owner-only, like mcp.json and state.json beside it
+                    make_private(CALL_LOG, 0o600)
                 fh.write(json.dumps(row) + "\n")
         except OSError:
             pass
@@ -1353,7 +1498,12 @@ class Router:
                             max_lines=int(args.get("max_lines") or 400),
                             grep=str(args.get("grep") or ""))
             if not got.get("ok"):
-                return "retrieve_spill failed: %s\n\nNEXT STEP: use the id exactly as the notice gave it (sp_ + 12 hex)." % got.get("error")
+                # The archive keeps the newest `keep` spills; an id from early in a long
+                # session can be gone. Say which, so the model stops retrying the id.
+                return ("retrieve_spill failed: %s -- it may have been pruned (keep=%d)\n\n"
+                        "NEXT STEP: use the id exactly as the notice gave it (sp_ + 12 hex), "
+                        "or call_tool again to reproduce the result."
+                        % (got.get("error"), getattr(store, "keep", 500)))
             try:
                 # The archive came back, so the model wanted the original: count it once
                 # against the tool that produced it. An id we never handed out counts nothing.
@@ -1423,86 +1573,60 @@ def build_router_tools(backends: dict) -> list:
     Naming the servers costs a few tokens and is the difference between a
     catalogue the model opens and one it ignores (docs/adr/0002).
 
-    Each description says what the tool is for, when a sibling is the better call,
-    what it touches, and what comes back -- in that order, one sentence each,
-    because every word here is paid for on every request (docs/adr/0003).
-    Parameters carry `default` and `examples`, but no `minimum`/`maximum`: the
-    router clamps out-of-range numbers itself, and a client that validated a
-    bound would turn a small model's limit=50 into an error instead."""
+    Each description carries four things and spends about one clause on each: what
+    the tool is for, when a sibling is the better call, what it touches, and what
+    comes back. They are written to a measured ceiling, because every word is
+    re-sent on every request (docs/adr/0003, tests/test_tools_list_budget.py), so a
+    point that the parameter list or the enum already makes is not repeated here.
+    Parameters carry `default` but no `minimum`/`maximum`: the router clamps
+    out-of-range numbers itself, and a client that validated a bound would turn a
+    small model's limit=50 into an error instead."""
     live = [(n, b) for n, b in sorted(backends.items()) if b.status == "ok"]
     catalogue = "; ".join("%s (%s)" % (n, b.hint()) for n, b in live)
     if catalogue:
         offer = ("THESE SERVERS ARE AVAILABLE AND YOU SHOULD USE THEM RATHER THAN "
                  "GUESSING OR WORKING AROUND THEM: " + catalogue + ". "
-                 "If a request concerns any of those, call this FIRST to "
-                 "find the right tool, then call_tool. ")
+                 "Call this FIRST, then call_tool. ")
     else:
-        # No live backend (none configured, or none started): say so plainly. A catalogue
-        # slot reading "none reachable" after "THESE SERVERS ARE AVAILABLE" contradicts itself.
-        offer = ("No server is reachable yet (none configured or none started); this "
-                 "returns why. ")
-    server_example = live[0][0] if live else "git"
+        # No live backend (none configured, or none started): say so plainly, and WITHOUT the
+        # upper-case block. "THESE SERVERS ARE AVAILABLE ...: none reachable" read as an
+        # unresolved template on Glama's 2026-10-15 review, because it is one.
+        offer = "No server is reachable yet; this says why. "
     return [
         {"name": "list_capabilities",
-         "description": ("Browse the tools on the connected MCP servers. " + offer +
-                         "With a keyword in mind, "
-                         "search_capabilities is cheaper. Read-only: reads the router's catalogue "
-                         "in memory, never calls a backend. Returns, for one server, a line per tool "
-                         "(server.tool: summary, then its args); for all, one line per server with "
-                         "its tool names. A server that failed to start shows its error, never an "
-                         "empty list."),
+         "description": ("List the tools on the connected MCP servers. " + offer +
+                         "With a keyword, search_capabilities is cheaper. Read-only. Returns a "
+                         "line per tool, else per server with any error."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string", "examples": [server_example],
-                        "description": ("Server name from the catalogue above; omit to list every server.")}}}},
+             "server": {"type": "string", "description": "Catalogue name; omit for all."}}}},
         {"name": "search_capabilities",
-         "description": ("Find a tool by keyword across every connected server, ranked best first. "
-                         "Use instead of list_capabilities when you know roughly what you need; "
-                         "an empty query falls back to the full listing. Read-only, in memory, no "
-                         "backend call. Returns a count line, then one line per match (server.tool: "
-                         "summary), with the args of the top three so call_tool needs no "
-                         "describe_tool."),
+         "description": ("Find a tool by keyword on every connected server; cheaper than "
+                         "list_capabilities when you know roughly what you want. Read-only. "
+                         "Returns a line per match, best first, with args."),
          "inputSchema": {"type": "object", "properties": {
-             "query": {"type": "string", "examples": ["create issue"],
-                       "description": "Words to match against tool names and summaries; plain words, not a regex."},
-             "server": {"type": "string", "examples": [server_example],
-                        "description": "Search one server only; omit to search all."},
-             "limit": {"type": "integer", "default": 8, "examples": [8],
-                       "description": "Most matches to return, 1 to 25 (clamped)."}},
+             "query": {"type": "string", "description": "Words matched on tool names."},
+             "server": {"type": "string", "description": "One server; omit for all."},
+             "limit": {"type": "integer", "default": 8,
+                       "description": "Max matches, 1-25 (clamped)."}},
              "required": ["query"]}},
         {"name": "describe_tool",
-         "description": ("Get the arguments of ONE backend tool. Use after list_capabilities or "
-                         "search_capabilities and before call_tool when you are unsure of the "
-                         "arguments; skip it when the listing already showed them. Read-only, in "
-                         "memory, no backend call. Returns the tool's summary and each argument "
-                         "with its type and whether it is required (detail=full: the tool's whole "
-                         "JSON definition), then the call_tool to make."),
+         "description": ("Get the arguments of ONE backend tool, before call_tool. `server`/`tool` "
+                         "are catalogue names; an unknown one returns the valid ones. Read-only. "
+                         "Returns each argument and its type."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string", "examples": [server_example],
-                        "description": "Server name from the catalogue."},
-             "tool": {"type": "string", "examples": ["git_status"],
-                      "description": "Tool name on that server, as listed."},
-             "detail": {"type": "string", "enum": ["compact", "full"], "default": DESCRIBE_DETAIL,
-                        "description": ("compact: summary and arguments; full: the whole JSON "
-                                        "schema. Default %s.") % DESCRIBE_DETAIL}},
+             "server": {"type": "string"}, "tool": {"type": "string"},
+             # `detail`: the enum and the default are the documentation; a prose line
+             # repeating "compact or full" is paid for on every request and adds nothing.
+             "detail": {"type": "string", "enum": ["compact", "full"], "default": DESCRIBE_DETAIL}},
              "required": ["server", "tool"]}},
         {"name": "call_tool",
-         "description": ("Run a tool on a connected server. THIS IS THE STEP THAT ANSWERS "
-                         "THE USER -- the other tools only find the name and arguments. Side "
-                         "effects are the backend tool's own: it can write, delete or reach the "
-                         "network. Use describe_tool first if unsure of the arguments: they are checked "
-                         "against the tool's schema, and a call that cannot match is not sent. Returns "
-                         "the tool's result as text; a large one is shortened, with an id retrieve_spill "
-                         "reads the rest by. Failures are text too: an unknown name lists the valid ones, "
-                         "a dead backend gives its error."),
+         "description": ("Invoke a tool on a connected server. THIS IS THE STEP THAT ANSWERS THE "
+                         "USER -- list_capabilities only finds the name. `server`/`tool` are "
+                         "catalogue names. Side effects are the backend tool's own. Returns its "
+                         "result as text, big ones via retrieve_spill."),
          "inputSchema": {"type": "object", "properties": {
-             "server": {"type": "string", "examples": [server_example],
-                        "description": "Server name from the catalogue."},
-             "tool": {"type": "string", "examples": ["git_status"],
-                      "description": "Tool name on that server, as listed."},
-             "args": {"examples": [{"repo_path": "/home/user/project"}],
-                      "description": ("The tool's arguments as describe_tool lists them: an object "
-                                      "like {\"repo_path\": \"/home/user/project\"}, or the same as a "
-                                      "JSON string. Omit for a tool that takes none.")}},
+             "server": {"type": "string"}, "tool": {"type": "string"},
+             "args": {"description": "Object or JSON string; omit if none."}},
              "required": ["server", "tool"]}},
     ]
 
@@ -1512,33 +1636,25 @@ def build_extra_tools() -> list:
     extra = []
     if tg_groups is not None:
         extra.append({"name": "list_groups_with_costs",
-                      "description": ("List tool GROUPS (by default one per server) with the "
-                                      "context-token cost of loading each, so you can pick only the "
-                                      "group a task needs. Use it to plan context, not to find a tool "
-                                      "(list_capabilities does that); under DSH, activate_group(group) then "
-                                      "loads one. Read-only, in memory. Returns one "
-                                      "line per group (name, tool count, ~tokens), then the router's own "
-                                      "cost and the cost of loading every group."),
+                      "description": ("Tool GROUPS with the context-token cost of loading each; "
+                                      "to find a tool use list_capabilities. Read-only. "
+                                      "Returns a line per group and the totals."),
                       "inputSchema": {"type": "object", "properties": {}}})
     if tg_spill is not None and tg_ladder is not None and LADDER_ON:
         extra.append({"name": "retrieve_spill",
-                      "description": ("Read back the FULL original of a call_tool result that was "
-                                      "shortened. Use only with the id from a [tool-guardian: ...] "
-                                      "notice (no notice, no archive); to rerun the tool use call_tool. "
-                                      "Pass grep to fetch "
-                                      "just the lines you need. Read-only: reads the local archive. "
-                                      "Returns a window of the archived text, or with grep the matching "
-                                      "lines as L<number>: text, and how to page on."),
+                      "description": ("Read back the FULL original of a result call_tool "
+                                      "shortened, by the id in its notice; an unknown or pruned "
+                                      "id fails saying so. Read-only. Returns a text window, or "
+                                      "grep's lines."),
                       "inputSchema": {"type": "object", "properties": {
                           "id": {"type": "string",
-                                 "examples": ["sp_0123456789ab"],
-                                 "description": "sp_ plus 12 hex digits, exactly as the notice gave it."},
-                          "grep": {"type": "string", "examples": ["error|failed"],
-                                   "description": "Case-insensitive regex; only matching lines come back. Omit to read a window."},
-                          "start_line": {"type": "integer", "default": 1, "examples": [1],
-                                         "description": "First line of the window, from 1. Ignored with grep."},
-                          "max_lines": {"type": "integer", "default": 400, "examples": [400],
-                                        "description": "Most lines or matches to return, 1 to 2000 (clamped)."}},
+                                 "description": "sp_ + 12 hex, from the notice."},
+                          "grep": {"type": "string",
+                                   "description": "Regex; omit for a window."},
+                          "start_line": {"type": "integer", "default": 1,
+                                         "description": "The window's first line."},
+                          "max_lines": {"type": "integer", "default": 400,
+                                        "description": "Max lines/matches, 1-2000."}},
                           "required": ["id"]}})
     return extra
 
@@ -1597,8 +1713,24 @@ def build_all_tools(backends: dict) -> list:
                                   + build_skill_tools(scan_skills(SKILLS_DIRS)))]
 
 
+def _reconfigure_stdin() -> None:
+    """MCP stdio is UTF-8 whatever the console code page says. Without this a Windows
+    cp1252 stdin turns a non-ASCII argument into mojibake before the router ever sees
+    it. Python 3.7+ has reconfigure(); anything else is left alone."""
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001  (a replaced or non-text stdin, e.g. in tests)
+        pass
+
+
+def _error(mid, code: int, message: str) -> dict:
+    """A JSON-RPC error object for one request id."""
+    return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
+
+
 def serve(router: Router) -> int:
     """Speak MCP on stdio. stdout is the protocol -- see log()."""
+    _reconfigure_stdin()
     out = sys.stdout
     for line in sys.stdin:
         line = line.strip()
@@ -1608,6 +1740,13 @@ def serve(router: Router) -> int:
             msg = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(msg, dict):
+            # A bare array, string or number is valid JSON and not a JSON-RPC request.
+            # msg.get() used to raise AttributeError and end the session.
+            out.write(json.dumps(_error(None, -32600, "Invalid Request: expected a JSON "
+                                                      "object, got %s" % type(msg).__name__)) + "\n")
+            out.flush()
+            continue
         method, mid = msg.get("method"), msg.get("id")
         if method == "initialize":
             client = ((msg.get("params") or {}).get("clientInfo") or {}).get("name") or ""
@@ -1616,6 +1755,11 @@ def serve(router: Router) -> int:
                      "serverInfo": {"name": "tool-guardian", "version": __version__}}
         elif method == "tools/list":
             reply = {"tools": ROUTER_TOOLS}
+        elif method == "ping":
+            # MCP utilities/ping: an EMPTY result, and nothing else. Clients send it as a
+            # keep-alive, so the -32601 below must never see it -- main answered it only by
+            # accident, through the catch-all that returned {} for every unknown method.
+            reply = {}
         elif method == "tools/call":
             p = msg.get("params") or {}
             try:
@@ -1631,7 +1775,12 @@ def serve(router: Router) -> int:
         elif mid is None:
             continue  # a notification
         else:
-            reply = {}
+            # An empty result used to answer anything, so a client probing the stateless
+            # 2026-07-28 revision's `server/discover` read it as supported and never fell
+            # back. "Method not found" is the answer that lets it.
+            out.write(json.dumps(_error(mid, -32601, "Method not found: %s" % method)) + "\n")
+            out.flush()
+            continue
         if mid is not None:
             out.write(json.dumps({"jsonrpc": "2.0", "id": mid, "result": reply}) + "\n")
             out.flush()
@@ -1744,6 +1893,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.hook:
         # First, and before .env loading: a hook runs on every shell call and must stay fast.
+        _reconfigure_stdin()  # the hook's JSON is UTF-8 too, code page or not
         try:
             code, out = hook_pretooluse(sys.stdin.read(), a.mode, a.rules)
         except Exception:  # noqa: BLE001  (never break the user's shell)
@@ -1767,7 +1917,12 @@ def main(argv=None) -> int:
         cfg = a.config or os.environ.get("TOOL_GUARDIAN_CONFIG", "")
         if cfg:
             os.environ.setdefault("TOOL_GUARDIAN_CONFIG", cfg)
-        tg_env.load_env_file()
+        env_path = tg_env.resolve_env_path()
+        count = tg_env.load_env_file()
+        # Which .env was read is as load bearing as which config: a backend token that
+        # arrives from the wrong file (or from none) is the usual cause of a dead server.
+        log("env: %d value(s) from %s" % (count, env_path) if os.path.isfile(env_path)
+            else "env: no .env file (looked for %s)" % env_path)
         read_tunables()
     if a.selftest:
         return selftest(a.config)

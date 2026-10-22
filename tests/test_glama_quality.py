@@ -2,6 +2,8 @@
 description says what the tool returns, and the README names each tool once and says which install is which."""
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 from test_tool_annotations import EVERY_TOOL, _tools_over_mcp
@@ -13,11 +15,16 @@ README_TOOLS = ("list_capabilities", "search_capabilities", "describe_tool", "ca
 
 
 def test_every_parameter_is_documented(tmp_path):
+    """Explained once, and in the cheapest place that works: a parameter carries its own
+    description unless its `enum` already lists the values or the tool description names it.
+    tests/test_tool_definitions.py holds the same rule with the reasoning."""
     tools = _tools_over_mcp(tmp_path)
     assert {t["name"] for t in tools} == EVERY_TOOL
     for tool in tools:
         for pname, spec in tool["inputSchema"].get("properties", {}).items():
-            assert len(spec.get("description", "")) >= 20, (tool["name"], pname)
+            where = (tool["name"], pname)
+            assert (len(spec.get("description", "")) >= 20 or "enum" in spec
+                    or re.search(r"\b%s\b" % pname, tool["description"])), where
 
 
 def test_every_description_says_what_comes_back(tmp_path):
@@ -69,3 +76,25 @@ def test_dockerfile_copies_every_module_the_package_installs():
     for f in ("pyproject.toml", "README.md", "LICENSE"):
         assert f in copied, f
     assert 'ENTRYPOINT ["tool-guardian"]' in docker
+
+
+def test_readme_headline_figures_come_from_the_bench():
+    """Every token figure in the README's headline, hero table and savings section is what
+    `python bench/bench_tokens.py --json` prints today -- not a number typed once and left
+    behind. (On 2026-10-21 the README said 1,790 while the bench said something else.)"""
+    out = subprocess.run([sys.executable, str(ROOT / "bench" / "bench_tokens.py"), "--json"],
+                         capture_output=True, text=True, timeout=300, check=True).stdout
+    bench = json.loads(out)["catalog"]
+    full = "{:,}".format(bench["full_tokens"])
+    router = "{:,}".format(bench["router_tokens"])
+    pct = "%.1f" % bench["saved_pct"]
+
+    assert ("<b>Seven MCP servers for %s tokens instead of %s" % (router, full)) in README
+    assert ("**%s tokens** of schemas on every request" % full) in README
+    assert ("**%s tokens** (3 %%); a schema is fetched only when the model asks" % router) in README
+    assert ("(%s tokens with seven servers behind it, measured below)" % router) in README
+    assert ("**Every request:** %s tokens of tool schemas without tool-guardian, %s with it "
+            "(**%s %% less**)" % (full, router, pct)) in README
+    for row in bench["servers"]:
+        assert "| %s | %d | {:,} |".format(row["tokens"]) % (row["server"], row["tools"]) in README
+    assert "| **all seven** | **%d** | **%s** |" % (bench["total_tools"], full) in README

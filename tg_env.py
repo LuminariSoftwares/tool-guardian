@@ -130,6 +130,12 @@ def _parse_env_line(raw_line):
     return key, value
 
 
+def resolve_env_path(path=None, environ=None):
+    """The .env file load_env_file() would read, whether or not it exists. Public so a
+    caller can report which file was used (the router logs it at startup)."""
+    return _resolve_env_path(path, os.environ if environ is None else environ)
+
+
 def load_env_file(path=None, override=False, environ=None):
     """
     Load KEY=VALUE pairs from a .env file into environ.

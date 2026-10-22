@@ -33,3 +33,30 @@ server, but every added word is re-sent on every request.
   seven-server bench from 1,209 to 1,790 (94.0 % → 91.1 % saved; 3.7 % → 5.5 % of a 32K window).
 - There is no terse mode for the descriptions yet; `TOOL_GUARDIAN_PRESET=small` shortens only the
   catalogue.
+
+## Amendment, 2026-10-22: the budget is a number and a test
+
+The 2026-10-21 pass measured the wrong thing. `model_cost()` leaves out `title` and `annotations`
+by design, so the 1,478 above was ~300 tokens short of the payload a client actually receives: the
+real `tools/list` was **1,781 tokens**, against 986 for 0.7.0. At that size the router's own
+definitions were a meaningful slice of the saving they exist to produce.
+
+- The ceiling is now the real payload, measured end to end — start the server over stdio, complete
+  the handshake, `tools/list`, `json.dumps(result["tools"])`, ÷ 3.5 — and it is **1,100 tokens**,
+  enforced by `tests/test_tools_list_budget.py`, whose failure message prints the measurement and
+  the per-tool breakdown. `tests/test_tool_definitions.py` pins the same number in-process.
+- Each description still carries the four things above, but spends about one *clause* on each
+  rather than a sentence, and a point the parameter list or an `enum` already makes is not repeated
+  in prose. Parameters are explained exactly once: by their own description, by their `enum`, or by
+  the tool description naming them. The per-parameter `examples` added on 2026-10-21 are gone —
+  about 190 tokens, re-sent on every request, for information the description already carried.
+- Two things that were genuinely missing were added, because a model that guesses wrong here pays
+  more than the words cost: what `describe_tool`'s `server`/`tool` accept and what an unknown name
+  returns, and what an unknown or pruned `retrieve_spill` id returns.
+- The upper-case instruction in `list_capabilities` stays when there are servers to name (0002),
+  but with nothing live the description now says so in sentence case: an upper-case block followed
+  by "none reachable" is an unresolved template, not an instruction.
+
+Measured after: **1,090 tokens** of `tools/list` with no backends, and **1,084** on the
+seven-server bench (20,005 → 1,084, 94.6 % saved, 3.3 % of a 32K window). Raising `BUDGET` is a
+decision; write the measurement in the CHANGELOG when you do.

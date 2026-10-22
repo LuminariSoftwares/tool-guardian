@@ -1,6 +1,6 @@
 <h1 align="center">Tool Guardian</h1>
 
-<p align="center"><b>Seven MCP servers for 1,790 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
+<p align="center"><b>Seven MCP servers for 1,084 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
 
 <p align="center">For local models served by Ollama, LM Studio, vLLM or llama.cpp: the router never talks to the model backend, so any of them works when your client's model calls tools.</p>
 
@@ -40,27 +40,90 @@ Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-gua
 
 | | Without Tool Guardian | With it |
 |---|---|---|
-| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,790 tokens** (5 %); a schema is fetched only when the model asks |
+| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,084 tokens** (3 %); a schema is fetched only when the model asks |
 | A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
 | DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
 | A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
 
 ## Quick start (60 seconds)
 
-Python 3.9+ and, for this example, Node.js (the filesystem server runs with `npx`). Run in any terminal:
+Nothing to install: [`uvx`](https://docs.astral.sh/uv/) runs it from PyPI. The example server below
+is the MCP filesystem server, which runs with `npx`, so that one line needs Node.js — the router
+itself is Python 3.9+ and standard library only.
 
 ```bash
-pip install tool-guardian
-tool-guardian-setup add files -- npx -y @modelcontextprotocol/server-filesystem "$HOME"
-tool-guardian --selftest
-claude mcp add --scope user tool-guardian -- tool-guardian     # or any client: see "Run" below
+uvx tool-guardian --version
+uvx --from tool-guardian tool-guardian-setup add files -- npx -y @modelcontextprotocol/server-filesystem "$HOME"
+uvx tool-guardian --selftest
+claude mcp add --scope user tool-guardian -- uvx tool-guardian   # or any client: see "Run" below
 ```
+
+Prefer it installed? `pip install tool-guardian`, then drop the `uvx` prefixes (`tool-guardian-setup add ...`,
+`tool-guardian --selftest`).
 
 Success looks like `added 'files' to ~/.tool-guardian/mcp.json`, then from `--selftest`
 `1 backend(s) up, 14 tools reachable.` and a `router tools cost ~N tokens vs ~M` line. Already have
 servers in Claude Desktop, Cursor or Windsurf? `tool-guardian-setup import` copies them instead of `add`.
 In the client, ask for something one of your servers does; the model should call `list_capabilities`
 (or `search_capabilities`) and then `call_tool`.
+
+### What it looks like in practice
+
+A real session against two servers (`files` and `git`), abridged only where marked. The model asks
+for the catalogue, narrows to one server, checks one tool's arguments, then calls it:
+
+```
+> list_capabilities()
+[files] 14 tools: read_file, read_text_file, read_media_file, read_multiple_files, write_file,
+        edit_file, create_directory, list_directory, list_directory_with_sizes, directory_tree,
+        move_file, search_files, get_file_info, list_allowed_directories
+[git] 12 tools: git_status, git_diff_unstaged, git_diff_staged, git_diff, git_commit, git_add,
+      git_reset, git_log, git_create_branch, git_checkout, git_show, git_branch
+
+NEXT STEP: use search_capabilities with a keyword (or list_capabilities with one server name) to
+see a tool's args, then call_tool.
+
+> list_capabilities(server="files")
+files.read_file: Read the complete contents of a file as text. DEPRECATED: Use read_text_file...
+    args: path:string, ?tail:number, ?head:number
+files.read_text_file: Read the complete contents of a file from the file system as...
+    args: path:string, ?tail:number, ?head:number
+... 11 more tools ...
+files.list_allowed_directories: Returns the list of directories that this server is allowed to access....
+    args: (no arguments)
+
+NEXT STEP: you have not answered the user yet. Pick the tool above that does the job and use
+call_tool with server files, that tool's name, and the args listed under it.
+
+> describe_tool(server="files", tool="read_text_file")
+files.read_text_file: Read the complete contents of a file from the file system as...
+required args: path:string
+
+NEXT STEP: use call_tool with server files, tool read_text_file, args: path:string, ?tail:number, ?head:number.
+
+> call_tool(server="files", tool="read_text_file", args={"path": "project/README.txt"})
+hello from tool-guardian
+
+NEXT STEP: answer the user from this result.
+```
+
+Only the router's own six tools were in the model's context the whole time; the 26 backend tools
+were never sent.
+
+## When *not* to use the router
+
+It is the wrong tool in two cases, and saying so is cheaper than finding out:
+
+- **Your client already searches tools for you.** Some clients (and some model APIs) load tool
+  definitions on demand themselves. Putting a router under that adds a hop and a second catalogue
+  for no saving.
+- **You run a handful of small servers.** The router's own tools cost about 1,100 tokens of
+  `tools/list`; one small server behind it is close to break-even (`--selftest` prints the real
+  arithmetic for *your* servers before you commit to it). The saving grows with every server added
+  and is largest where it matters most — a 32K local model with half a dozen servers.
+
+It also does not help if your model will not call tools reliably in the first place: see
+[Model requirement](#model-requirement-read-this-before-you-switch).
 
 ## Works with
 
@@ -69,7 +132,7 @@ which reads `~/.tool-guardian/mcp.json`: `tool-guardian-setup import` fills it f
 
 | Client | Example | Where it goes | Tested |
 |---|---|---|---|
-| **Claude Code** | [`project.mcp.json`](examples/claude-code/project.mcp.json), hook: [`settings.json`](examples/claude-code/settings.json) | `claude mcp add --scope user tool-guardian -- tool-guardian`, or copy to `.mcp.json` in a project (Claude Code asks once to approve a project server); the hook goes in `~/.claude/settings.json` or `.claude/settings.json` | 2.1.296: full turn; hook in a live session |
+| **Claude Code** | [`project.mcp.json`](examples/claude-code/project.mcp.json), hook: [`settings.json`](examples/claude-code/settings.json), [notes](examples/claude-code/README.md) | `claude mcp add --scope user tool-guardian -- uvx tool-guardian`, or copy to `.mcp.json` in a project (Claude Code asks once to approve a project server — that file is the client's config, not the router's) ; the hook goes in `~/.claude/settings.json` or `.claude/settings.json` | 2.1.296: full turn; hook in a live session |
 | **OpenCode** | [`opencode.json`](examples/opencode/opencode.json) | `opencode.json` in the project, or `~/.config/opencode/opencode.json` | 1.18.35: full turn |
 | **Cline** | [`cline_mcp_settings.json`](examples/cline/cline_mcp_settings.json) | VS Code: Cline &rarr; MCP Servers &rarr; Configure MCP Servers; CLI: `~/.cline/data/settings/cline_mcp_settings.json` | CLI 3.0.70: full turn |
 | **Continue** | [`tool-guardian.yaml`](examples/continue/tool-guardian.yaml) | `.continue/mcpServers/` in the workspace (IDE), or its `mcpServers` entry in `config.yaml` | `cn` 1.5.47: full turn (entry in `config.yaml`) |
@@ -134,7 +197,7 @@ You have two ways to deal with that today, and both cost you something:
 | Load fewer MCP servers | You lose the capability entirely |
 | Live with it | Two-thirds of the window is gone before you type |
 
-Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just a handful of small tools plus a one-line catalogue of server names (1,790 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
+Tool Guardian is a third option that costs neither. It fronts all your servers and shows the model just a handful of small tools plus a one-line catalogue of server names (1,084 tokens with seven servers behind it, measured below). The full schema for a tool is fetched only when the model asks for it:
 
 ```
 list_capabilities(server?)      one line per tool — names and purpose
@@ -195,7 +258,7 @@ The router exposes these tools. The first four are always there; `list_groups_wi
 | `list_skills` | none | one line per skill (only with `TOOL_GUARDIAN_SKILLS`) |
 | `read_skill` | `name` | the full text of one skill (only with `TOOL_GUARDIAN_SKILLS`) |
 
-All but `call_tool` only report (read-only, no network: the catalogue is in memory, the archive and skills on local disk); `call_tool` does whatever the backend tool does. Each tool's description says when to use a sibling instead and what it returns, and every parameter has a type, an example and a default; `tests/test_tool_definitions.py` checks that, and checks this table's argument names against the schemas the server really lists.
+All but `call_tool` only report (read-only, no network: the catalogue is in memory, the archive and skills on local disk); `call_tool` does whatever the backend tool does. Each tool's description says what it is for, when a sibling is the better call, what it touches and what comes back — in about one clause each, because the whole `tools/list` payload is capped at 1,100 tokens by a test. Every parameter is typed and explained exactly once, by its own description, by its `enum`, or by the tool description naming it; `tests/test_tool_definitions.py` checks that, and checks this table's argument names against the schemas the server really lists.
 
 ## Architecture
 
@@ -226,7 +289,7 @@ Key decisions, each with its trade-off (full records in [docs/adr/](docs/adr/)):
 |---|---|---|
 | Generic router tools, schemas on demand ([0001](docs/adr/0001-router-with-on-demand-discovery.md)) | 91 % fewer schema tokens on every request (bench) | every capability is 2–3 calls away; the model must choose to look |
 | Loud failure, named catalogue ([0002](docs/adr/0002-loud-failure-and-a-named-catalogue.md)) | a dead server is never mistaken for "no such tool" | the description grows a few tokens per server |
-| Descriptions budgeted and pinned ([0003](docs/adr/0003-descriptions-are-paid-on-every-request.md)) | tools a model can choose between without guessing | 1,478 tokens with no backends, pinned at ≤ 1,500 by a test |
+| Descriptions budgeted and pinned ([0003](docs/adr/0003-descriptions-are-paid-on-every-request.md)) | tools a model can choose between without guessing | 1,090 tokens of `tools/list` with no backends, pinned at ≤ 1,100 by a test |
 | Lenient inputs, strict backend checks ([0004](docs/adr/0004-lenient-inputs-strict-checks.md)) | small models' near-miss calls still work; impossible calls cost no round trip | schemas are looser than what the router enforces |
 | One stdlib Python core; DSH bundle is a bridge ([0005](docs/adr/0005-one-python-core-stdlib-only.md)) | installs anywhere; one router to fix | MCP stdio is hand-written; the npm package needs a Python |
 | Archive before shortening ([0006](docs/adr/0006-archive-before-shortening.md)) | big results stop flooding the window, nothing is lost | originals are kept on local disk |
@@ -294,7 +357,11 @@ Tool Guardian reads the **standard** `mcpServers` block (the same shape Claude D
 
 An optional per-server `"description"` enriches the catalogue the model sees. Without one, the hint is derived from that server's own tool names at startup.
 
-Config is searched in order: `--config PATH`, `$TOOL_GUARDIAN_CONFIG`, `./mcp.json`, `./.mcp.json`, `~/.tool-guardian/mcp.json`.
+Config is searched in order: `--config PATH`, `$TOOL_GUARDIAN_CONFIG`, `~/.tool-guardian/mcp.json`. Whichever file is used is printed to stderr at startup, with the `.env` that was loaded beside it.
+
+**A config in the current directory needs your say-so.** `./mcp.json` and `./.mcp.json` are *not* loaded automatically. A repository you cloned can carry one, and up to 0.7.0 starting the router inside that directory launched its servers — with no approval prompt from your client. When one is found and skipped you get a single stderr line naming it and the opt-in; to use it, pass `--config ./mcp.json`, set `TOOL_GUARDIAN_CONFIG=./mcp.json`, or set `TOOL_GUARDIAN_PROJECT_CONFIG=1`.
+
+A `./.mcp.json` whose only server is tool-guardian itself (what the Claude Code setup below writes, to register the router with the client) is never treated as the router's own config: it is skipped and the search carries on to `~/.tool-guardian/mcp.json`.
 
 ## Environment and `.env`
 
@@ -339,11 +406,19 @@ launches it.
   per-server listings total 9,582 characters with `small` against 16,274 without.
 
 - **Variable expansion.** `${VAR}`, `$VAR` and `%VAR%` are expanded in each
-  backend's `args` from the environment; unknown variables are left as-is.
+  backend's `args` **and in its `env` values** from the environment; unknown
+  variables are left as-is, so the backend's own error names the one you missed.
   Keep a secret in `.env` and reference it in a backend arg:
 
       "args": ["-y", "mcp-remote", "https://app.openseo.so/mcp",
                "--header", "Authorization: Bearer ${OPENSEO_API_KEY}"]
+
+  or in a backend's environment:
+
+      "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
+
+  (Up to 0.7.0 only `args` were expanded, so an `env` value like that reached
+  the server as the literal text `${GITHUB_TOKEN}`.)
 
 ## Run
 
@@ -398,7 +473,7 @@ handshake. A second failure within 60 s marks the backend `DOWN` and it is not r
 tool-guardian --selftest
 ```
 
-Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. with one filesystem server behind it: *"router tools cost ~1482 tokens vs ~3943 for the full set behind them -> ~2461 tokens freed on every request (62% smaller)"*. One small server is close to break-even; the saving grows with every server added. Below the totals it prints one `[server] N tools, ~M tokens` line per server, and it exits non-zero if any configured server failed to start. It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
+Starts your configured servers, prints the catalogue, and reports the tokens the router tools cost versus loading every server's tools directly — e.g. with one filesystem server behind it: *"router tools cost ~840 tokens vs ~3943 for the full set behind them -> ~3103 tokens freed on every request (79% smaller)"*. One small server is close to break-even; the saving grows with every server added. Below the totals it prints one `[server] N tools, ~M tokens` line per server, and it exits non-zero if any configured server failed to start. It ends with one `update:` line (a newer release, "none", or "could not check"); `tool-guardian-setup doctor` ends with the same line. The check runs at most once a day, is silent on failure, and is off with `GUARDIAN_NO_UPDATE_CHECK=1`.
 
 Token counts use `tiktoken` (cl100k_base) when it is importable and the characters ÷ 3.5 estimate otherwise; the report prints which, e.g. `token counts: estimate (chars / 3.5; tiktoken not available)`. `pip install tiktoken` switches it; nothing else needs it.
 
@@ -453,7 +528,7 @@ Reproduce it yourself: `python bench/bench_tokens.py` (no network, no model; `--
 | sequential-thinking | 1 | 1,185 |
 | **all seven** | **95** | **20,005** |
 
-**Every request:** 20,005 tokens of tool schemas without tool-guardian, 1,790 with it (**91.1 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 5 % full. (Before 2026-10-21 the router's descriptions were terser and this was 1,209; [ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md) records why they grew.)
+**Every request:** 20,005 tokens of tool schemas without tool-guardian, 1,084 with it (**94.6 % less**). On a 32K-context local model that is the difference between a window that is 61 % full before the conversation starts and one that is 3 % full. (The 2026-10-21 description rewrite had pushed this to 1,790; [ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md) records the budget that brought it back.)
 
 The output ladder on four typical tool results:
 
@@ -570,14 +645,27 @@ the call go on to Claude Code's normal permission flow; it approves nothing. No 
 the default behaviour, unchanged. The hook only sees the tools its `matcher` sends it, so widen the matcher (e.g.
 `Bash|PowerShell|WebFetch`) for rules on other tools.
 
+## Troubleshooting
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| The model never calls the router — it answers from memory or reaches for the shell | small models bypass generic tools; this is the single most common failure | run a few real tasks, then `tool-guardian --bypass-summary`; if it keeps bypassing, that model will not drive a router — see [Model requirement](#model-requirement-read-this-before-you-switch) |
+| Windows: the client reports `command not found` / the server never starts | `tool-guardian` is a script in a Scripts directory the client does not have on `PATH` | run `where tool-guardian` and put the full path in the client's `"command"`, or use `"command": "uvx", "args": ["tool-guardian", ...]` |
+| A server shows as `UNKNOWN` or `DOWN` in `list_capabilities` | the backend failed to start or died | the row now carries the backend's **own last stderr lines** (`-- its stderr: ...`): read them first, they usually name a missing token or a bad path. `tool-guardian-setup doctor` prints a `fix:` line per problem. A `DOWN` backend is retried once more after 60 s |
+| `config: ./mcp.json found but NOT loaded` on stderr | a config in the current directory is not loaded without consent (changed after 0.7.0) | if you meant to use it: `--config ./mcp.json`, or `TOOL_GUARDIAN_PROJECT_CONFIG=1`. If you did not, nothing is wrong — the file belongs to the directory you happen to be in |
+| Zero backends although `~/.tool-guardian/mcp.json` has servers | some other config won the search | the startup log names the file that was loaded, and the `.env` beside it; `--config` or `$TOOL_GUARDIAN_CONFIG` overrides both |
+| `retrieve_spill failed: ... it may have been pruned (keep=500)` | the archive keeps the newest `keep` results and that id aged out | re-run the tool with `call_tool`; raise `"spillKeep"` in the config's `toolGuardian` block if it happens often |
+| A backend gets the literal text `${MY_TOKEN}` | you are on 0.7.0 or earlier, where only `args` were expanded | update: `env` values are expanded in the next release (an unset variable still stays literal, on purpose) |
+
 ## Compatibility
 
 | | Tested on | Expected to work | Notes |
 |---|---|---|---|
 | DeepSeek Harness (bundle) | 0.1.2-alpha.2, Windows 11 | later 0.1.x | peer `@deepseek-ai/dsh-tools >=0.1.2-alpha.2`, `@deepseek-ai/cordis ^4.0.2`; `/toolguardian` needs DSH's command registry (present in 0.1.2-alpha.2) |
 | Node.js (bundle, `npm run setup`) | 22.x on Windows 11 and Linux | `^22.19.0` or `>=24` | the `engines` field |
-| Python (router, bridge, setup) | 3.11 on Windows 11 and Linux; CI: 3.11 on Ubuntu, Windows, macOS and 3.9 on Ubuntu | 3.9 – 3.12 | standard library only; 3.10 and 3.12 are not run by CI |
+| Python (router, bridge, setup) | 3.11 on Windows 11 and Linux; CI: 3.11 on Ubuntu, Windows, macOS and 3.9, 3.10, 3.12, 3.13 on Ubuntu | 3.9 – 3.13 | standard library only; every supported version is now run by CI |
 | Operating system | Windows 11 (daily use); Ubuntu, Windows, macOS (CI: pytest and the node tests) | | the client runs in [Works with](#works-with) were on Linux only |
+| Docker image | CI builds the [Dockerfile](Dockerfile) and speaks MCP to it over stdio on every push | | `python:3.12-slim`; the servers it fronts run in the container too, so a backend needing `npx` or `uvx` needs an image that has them |
 | MCP servers behind the router | stdio | stdio | HTTP/SSE (`"url"`) servers are reported `UNSUPPORTED` |
 | Clients (MCP server path) | Claude Code 2.1.296, OpenCode 1.18.35, Cline CLI 3.0.70, Continue `cn` 1.5.47 (one scripted-model turn each, Linux); OpenClaude | Claude Desktop, Cursor, the Cline and Continue IDE extensions, any stdio MCP client | see [Works with](#works-with); the Claude Code hook ran in a live session |
 | Models | `qwen3:30b-a3b-instruct-2507` under DSH drove the router (3 sessions) | any model that calls tools | gpt-oss:20b and qwen3-30b-a3b bypassed it under OpenClaude — see [Model requirement](#model-requirement-read-this-before-you-switch) |
@@ -593,13 +681,28 @@ The longer versions, with alternatives and consequences, are the [decision recor
 - **Failure is loud, on purpose.** A router is a single point of failure: without one a broken server costs you that server; behind one it could cost you all of them. So an unreachable backend is reported as `UNKNOWN` with its real error, **never as an empty tool list**. A model that asks for a server and gets `[]` concludes the capability doesn't exist and quietly works around it — the exact failure this avoids.
 - **Built for models, not just machines.** It accepts a tool's `args` as either an object or a JSON string, aliases the near-misses models actually send (`query`/`name` → `server`), and ends every result with the concrete **NEXT STEP** to call — because a model that receives a catalogue and no instruction tends to stop there instead of finishing the task.
 - **The catalogue names your servers.** Six unnamed generic tools give a model no reason to believe any capability exists, so it improvises. Naming the servers in the tool description costs a few tokens and is the difference between a catalogue the model opens and six tools it ignores.
+- **Hand-written protocol, no SDK.** The router speaks **MCP protocol revision `2024-11-05`** over stdio, both to its clients and to the servers behind it, implemented by hand in `tool_guardian.py` — no MCP SDK, no framework, nothing to install ([ADR 0005](docs/adr/0005-one-python-core-stdlib-only.md)). It is about 400 lines of JSON-RPC over two pipes, it is the reason `dependencies = []`, and it is why a single copy of the script still works on a machine with nothing but Python 3.9. Newer client revisions negotiate down to it; an unknown method gets a proper `-32601` so a client can fall back.
+- **The token budget is a test, not an intention.** The router's own `tools/list` is re-sent on every request, so it is capped at 1,100 tokens by [`tests/test_tools_list_budget.py`](tests/test_tools_list_budget.py), measured end to end over stdio. Making a description nicer at the cost of the budget is the one change this project will not take ([ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md)).
+
+## The guardian family
+
+Four small, free, MIT-licensed tools for people running local models. They share no code and install separately; each is useful alone.
+
+| | What it keeps out of your way |
+|---|---|
+| **Tool Guardian** (this one) | tool *definitions* and tool *results* — the fixed per-request cost of having MCP servers at all |
+| [**Context Guardian**](https://pypi.org/project/context-guardian/) | the *conversation* — compacts it before the window fills and keeps what matters |
+| [**Code Guardian**](https://github.com/LuminariSoftwares/code-guardian) | the *codebase* — feeds a model the part of a repository a task needs instead of the whole tree |
+| [**Stack Guardian**](https://github.com/LuminariSoftwares/stack-guardian) | the *stack* — checks that the local AI services a workflow depends on are actually up |
+
+Tool Guardian and Context Guardian are the two halves of one window problem; see [Install both](#install-both-deepseek-harness-about-5-minutes).
 
 ## What it does *not* do (yet)
 
 - **stdio servers only.** An HTTP/SSE server (a `"url"` entry) is reported `UNSUPPORTED` — load it directly rather than through here.
 - It does not merge or rename tools; it proxies them faithfully. `call_tool(server, tool, args)` reaches the real tool unchanged.
 - Over plain MCP it cannot see a client's shell calls; see [bypass detection and its limits](#bypass-detection-over-plain-mcp-and-its-limits).
-- **The router's own tools cost about 1,500 tokens** (with no backends; more with a long server list). With one small server behind it, that is close to break-even; it pays off from a few servers up. There is no terse mode for the descriptions yet.
+- **The router's own tools cost about 1,100 tokens** of `tools/list` (with no backends; more with a long server list). With one small server behind it, that is close to break-even; it pays off from a few servers up. There is no terse mode for the descriptions yet — the budget keeps them terse for everyone instead.
 - The token figures are an estimate (characters ÷ 3.5) unless `tiktoken` is installed.
 - It has no card in the DSH web UI; configure it in `~/.dsh/settings.yaml` ([docs/dsh-settings.md](docs/dsh-settings.md)).
 
