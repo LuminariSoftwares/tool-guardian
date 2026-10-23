@@ -8,6 +8,12 @@ Docs, tests and CI only; no runtime change.
   `tests/test_glama_quality.py` checks the block against the bench. DSH-only figures moved to a "DeepSeek Harness
   results" section, each with its scope.
 - **Guardian family block** shared byte-for-byte by the four guardian READMEs, pinned by `tests/test_family_block.py`.
+- **Releases by trusted publishing (OIDC):** publishing a GitHub Release runs `.github/workflows/release.yml`,
+  which checks that the tag names the `pyproject.toml` version, publishes each package only when its version is not
+  on its registry yet (PyPI and npm are independent version lines; nothing new fails), runs the tests, builds, and
+  publishes with short-lived OIDC credentials and signed provenance; no stored registry credential. Owner steps and
+  the one-time registry setup: `docs/RELEASING.md`. `tests/test_release_workflow.py` fails if the workflow loses
+  `id-token: write` or gains a password, token input or secret.
 - **CI actions on Node 24:** `actions/checkout` v7.0.1, `actions/setup-python` v7.1.0, `actions/setup-node` v7.1.0.
 
 ## dsh-tool-guardian 0.8.0-beta.1 / PyPI tool-guardian 0.8.0 (2026-10-22)
