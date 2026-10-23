@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Docs, tests and CI only; no runtime change.
+
+- **README first screen** names the tested clients and shows `python bench/bench_tokens.py` with its output;
+  `tests/test_glama_quality.py` checks the block against the bench. DSH-only figures moved to a "DeepSeek Harness
+  results" section, each with its scope.
+- **Guardian family block** shared byte-for-byte by the four guardian READMEs, pinned by `tests/test_family_block.py`.
+- **CI actions on Node 24:** `actions/checkout` v7.0.1, `actions/setup-python` v7.1.0, `actions/setup-node` v7.1.0.
+
 ## dsh-tool-guardian 0.8.0-beta.1 / PyPI tool-guardian 0.8.0 (2026-10-22)
 
 **External review fixes (2026-10-21 triage), each with a test that failed on `51e0a1e` first

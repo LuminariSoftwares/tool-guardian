@@ -2,9 +2,7 @@
 
 <p align="center"><b>Seven MCP servers for 1,084 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
 
-<p align="center">For local models served by Ollama, LM Studio, vLLM or llama.cpp: the router never talks to the model backend, so any of them works when your client's model calls tools.</p>
-
-<p align="center">Measured on DeepSeek Harness with qwen3-coder:30b, 8 tasks: sessions that ended on a tool call written as text instead of made<br><b>7/16 &rarr; 0/32</b> (16 sessions on 0.4.0-beta.2, 32 on 0.5.0-beta.1; the repair runs in the DSH bundle, see the <a href="CHANGELOG.md">CHANGELOG</a>).</p>
+<p align="center">One MCP server in front of all your others. Tested with <b>Claude Code, OpenCode, Cline and Continue</b> (one scripted-model turn per client, see <a href="#works-with">Works with</a>); Claude Desktop, Cursor and other stdio MCP clients: expected, not yet tested.</p>
 
 <p align="center">
   <a href="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml"><img alt="tests" src="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml/badge.svg?branch=main"></a>
@@ -13,14 +11,29 @@
   <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-blue.svg">
   <img alt="Dependencies: none" src="https://img.shields.io/badge/python%20deps-none-2ea44f.svg">
   <img alt="MCP server" src="https://img.shields.io/badge/MCP-server-6f42c1.svg">
-  <img alt="DeepSeek Harness bundle" src="https://img.shields.io/badge/DSH-native%20bundle-0969da.svg">
 </p>
 
 mcp-name: io.github.LuminariSoftwares/tool-guardian
 
+The headline is this repo's bench, run against the recorded `tools/list` answers of seven public MCP servers (no network, no model; abridged where marked):
+
+```text
+$ python bench/bench_tokens.py
+# Tool-Guardian Token Benchmark
+
+Token counting method: estimate:chars/3.5
+
+| server | tools | tokens (full schemas) |
+...
+| **Total** | **95** | **20005** |
+
+**Every request:** 20005 tokens of tool schemas without tool-guardian, 1084 with it (94.6% less).
+```
+
 <p align="center">
   <a href="#quick-start-60-seconds">Quick start</a> &middot;
   <a href="#works-with">Works with</a> &middot;
+  <a href="#deepseek-harness-results">DeepSeek Harness</a> &middot;
   <a href="#install-both-deepseek-harness-about-5-minutes">Install both</a> &middot;
   <a href="docs/first-5-minutes.md">First 5 minutes</a> &middot;
   <a href="#why-this-exists">Why</a> &middot;
@@ -36,13 +49,14 @@ mcp-name: io.github.LuminariSoftwares/tool-guardian
 
 An MCP server that sits in front of your other MCP servers and exposes **6 router tools** (8 with [skills](#skills)) instead of dozens of specific ones: four generic ones to list, search, describe and call the tools behind it, plus two for tool-group costs and archived results (see [Tools](#tools)) — discovering the rest **on demand** — so tool definitions stop eating your context window before the model reads a word.
 
+The router never talks to the model backend, so it does not matter whether Ollama, LM Studio, vLLM or llama.cpp serves your model; what matters is that your client's model calls tools (run with Ollama; the others expected, not yet tested).
+
 Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-guardian): **Context Guardian compacts the conversation before the window fills; Tool Guardian keeps the tools from filling it in the first place.** Two halves of the same problem.
 
 | | Without Tool Guardian | With it |
 |---|---|---|
 | 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,084 tokens** (3 %); a schema is fetched only when the model asks |
-| A 50 KB shell result | 51,165 characters land in the conversation | **7,833 characters**, the full original archived and one call away |
-| DSH first request (measured) | 46 tools, 37,154 characters of schema | **22 tools, 18,503 characters** |
+| A 3,000-line build log with one error ([bench](#measured-savings)) | 115,945 characters land in the conversation | **4,540 characters**, the full original archived and one call away |
 | A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
 
 ## Quick start (60 seconds)
@@ -156,6 +170,15 @@ Not tested yet: the Cline VS Code extension (same file name and shape; tested th
 `.continue/mcpServers/` folder (read by the IDE extension; `cn` reads only `config.yaml`), and client runs on Windows or
 macOS (the unit tests run on all three in CI). On Windows, if a client cannot find `tool-guardian`, put the full path from
 `where tool-guardian` in the `command`.
+
+## DeepSeek Harness results
+
+<p><img alt="DeepSeek Harness bundle" src="https://img.shields.io/badge/DSH-native%20bundle-0969da.svg"></p>
+
+Tool Guardian also ships as a native [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) bundle, `dsh-tool-guardian` ([what it adds](#native-deepseek-harness-dsh-bundle)). These two figures come from DSH runs only and are not reproduced by anything in this repo:
+
+- **Sessions that ended on a tool call written as text instead of made: 7/16 &rarr; 0/32** &mdash; DeepSeek Harness (version not recorded), qwen3-coder:30b, 8 tasks; 16 sessions (8 &times; 2) on dsh-tool-guardian 0.4.0-beta.2, 32 sessions (8 &times; 4) on 0.5.0-beta.1; the repair runs in the DSH bundle only; measured by the author, script and raw runs not yet published (see the 0.5.0-beta.1 entry of the [CHANGELOG](CHANGELOG.md)); not yet measured on other setups.
+- **DSH first request:** 46 tools and 37,154 characters of schema without the bundle, 22 tools and 18,503 characters with it &mdash; one DSH setup, measured by the author, script not yet published.
 
 <!-- shared "install both" block: keep identical to the Context Guardian README -->
 ## Install both (DeepSeek Harness, about 5 minutes)
@@ -684,18 +707,18 @@ The longer versions, with alternatives and consequences, are the [decision recor
 - **Hand-written protocol, no SDK.** The router speaks **MCP protocol revision `2024-11-05`** over stdio, both to its clients and to the servers behind it, implemented by hand in `tool_guardian.py` — no MCP SDK, no framework, nothing to install ([ADR 0005](docs/adr/0005-one-python-core-stdlib-only.md)). It is about 400 lines of JSON-RPC over two pipes, it is the reason `dependencies = []`, and it is why a single copy of the script still works on a machine with nothing but Python 3.9. Newer client revisions negotiate down to it; an unknown method gets a proper `-32601` so a client can fall back.
 - **The token budget is a test, not an intention.** The router's own `tools/list` is re-sent on every request, so it is capped at 1,100 tokens by [`tests/test_tools_list_budget.py`](tests/test_tools_list_budget.py), measured end to end over stdio. Making a description nicer at the cost of the budget is the one change this project will not take ([ADR 0003](docs/adr/0003-descriptions-are-paid-on-every-request.md)).
 
+<!-- guardian-family:start -->
 ## The guardian family
 
-Four small, free, MIT-licensed tools for people running local models. They share no code and install separately; each is useful alone.
+Four small MIT-licensed tools for people running local models. Each does one job, they share no code, and each is useful on its own.
 
-| | What it keeps out of your way |
+| tool | what it answers |
 |---|---|
-| **Tool Guardian** (this one) | tool *definitions* and tool *results* — the fixed per-request cost of having MCP servers at all |
-| [**Context Guardian**](https://pypi.org/project/context-guardian/) | the *conversation* — compacts it before the window fills and keeps what matters |
-| [**Code Guardian**](https://github.com/LuminariSoftwares/code-guardian) | the *codebase* — feeds a model the part of a repository a task needs instead of the whole tree |
-| [**Stack Guardian**](https://github.com/LuminariSoftwares/stack-guardian) | the *stack* — checks that the local AI services a workflow depends on are actually up |
-
-Tool Guardian and Context Guardian are the two halves of one window problem; see [Install both](#install-both-deepseek-harness-about-5-minutes).
+| [code-guardian](https://github.com/LuminariSoftwares/code-guardian) | Before you run or merge code you did not write: is it safe, does it work, is anything missing? Three scores from a static scan, Python in depth. |
+| [context-guardian](https://github.com/LuminariSoftwares/context-guardian) | Keeps a long local-model session inside its context window: a proxy that compacts history before the window fills, with tools to search what was archived. |
+| [tool-guardian](https://github.com/LuminariSoftwares/tool-guardian) | Routes many MCP servers through a few tools, so their definitions stop filling the context window. |
+| [stack-guardian](https://github.com/LuminariSoftwares/stack-guardian) | Is my home AI stack healthy? Ollama / OpenAI-compatible nodes, NVIDIA GPUs and Tailscale peers, with a confidence grade on every finding. |
+<!-- guardian-family:end -->
 
 ## What it does *not* do (yet)
 
@@ -710,7 +733,7 @@ Tool Guardian and Context Guardian are the two halves of one window problem; see
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q                      # 181 tests
+python -m pytest -q                      # 212 tests; 3 skip until the npm install below has run
 npm install --no-package-lock --legacy-peer-deps
 npm run check && npm run test:node       # bundle syntax, text-call parser and repair
 node tests/dsh_smoke.mjs && node tests/probe_dsh_mvp.mjs && node tests/probe_dsh_loopguard.mjs
@@ -728,7 +751,7 @@ pip install -e . && python tests/clients/run_clients.py   # real clients on PATH
   `bench/bench_tokens.py` re-measures every token figure in this README from `bench/fixtures/catalogs/`.
 - **Clients.** `tests/clients/run_clients.py` drives Claude Code, OpenCode, Cline and Continue against a scripted model
   (no API key, no network); it is run by hand, not in CI.
-- **CI** runs pytest on Ubuntu, Windows and macOS (Python 3.11) and Ubuntu (Python 3.9), the node suites on all three
+- **CI** runs pytest on Ubuntu, Windows and macOS (Python 3.11) and Ubuntu (Python 3.9, 3.10, 3.12, 3.13), the node suites on all three
   operating systems, and a privacy scan of every tracked file.
 
 ## Acknowledgements

@@ -98,3 +98,21 @@ def test_readme_headline_figures_come_from_the_bench():
     for row in bench["servers"]:
         assert "| %s | %d | {:,} |".format(row["tokens"]) % (row["server"], row["tools"]) in README
     assert "| **all seven** | **%d** | **%s** |" % (bench["total_tools"], full) in README
+
+
+def test_readme_proof_block_is_the_bench_output():
+    """The code block under the headline is what `python bench/bench_tokens.py` prints: its lines
+    appear in the bench's output in the same order, the totals and the per-request line included,
+    and it sits above Quick start."""
+    out = subprocess.run([sys.executable, str(ROOT / "bench" / "bench_tokens.py")],
+                         capture_output=True, text=True, timeout=300, check=True).stdout.splitlines()
+    m = re.search(r"```text\n\$ python bench/bench_tokens\.py\n(.*?)```", README, re.S)
+    assert m, "no bench proof block"
+    assert m.start() < README.index("## Quick start")
+    shown = [line for line in m.group(1).splitlines() if line and line != "..."]
+    at = 0
+    for line in shown:
+        assert line in out[at:], line
+        at = out.index(line, at) + 1
+    assert any(line.startswith("| **Total** |") for line in shown)
+    assert any(line.startswith("**Every request:**") for line in shown)
