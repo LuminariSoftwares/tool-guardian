@@ -22,7 +22,9 @@ on:
       - .github/workflows/release.yml
       - pyproject.toml
       - package.json
+      - .github/scripts/release_check.py
       - tests/test_release_workflow.py
+      - tests/test_release_check.py
 
 permissions:
   contents: read
@@ -40,7 +42,8 @@ jobs:
       version: ${{ steps.versions.outputs.version }}
       npm_version: ${{ steps.versions.outputs.npm_version }}
       prerelease: ${{ steps.versions.outputs.prerelease }}
-      publish: ${{ steps.versions.outputs.publish }}
+      pypi: ${{ steps.versions.outputs.pypi }}
+      npm: ${{ steps.versions.outputs.npm }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,10 +55,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      # The tag must be vX.Y.Z with X.Y.Z = pyproject.toml's version and = package.json's version
-      # without its prerelease suffix (npm 0.8.0-beta.1 ships with PyPI 0.8.0 under tag v0.8.0).
-      # Publishing happens only for a published release, or a manual run on a v* tag with
-      # dry_run unticked; everything else is a dry run.
+      # The tag names the PyPI version: v + pyproject.toml's version, as written there. npm is an
+      # independent version line: package.json's version is published only if npm lacks it. A
+      # release with nothing new for either registry fails. Publishing happens only for a
+      # published release, or a manual run on a v* tag with dry_run unticked; everything else is
+      # a dry run. Logic and tests: .github/scripts/release_check.py, tests/test_release_check.py.
       - name: Check tag and versions
         id: versions
         env:
@@ -64,37 +68,7 @@ jobs:
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          python3 - <<'PY'
-          import json, os, re, sys, tomllib
-
-          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
-          npm_version = json.load(open("package.json", encoding="utf-8"))["version"]
-          event, ref = os.environ["EVENT"], os.environ["REF"]
-          if event == "release":
-              tag, publish = os.environ["RELEASE_TAG"], True
-          elif event == "workflow_dispatch" and ref.startswith("refs/tags/"):
-              tag, publish = os.environ["REF_NAME"], os.environ["DRY_RUN"] == "false"
-          else:
-              tag, publish = "v" + version, False
-              print("no release tag on %s; checking against v%s" % (event, version))
-          base = npm_version.split("-", 1)[0]
-          print("tag=%s pyproject=%s package.json=%s publish=%s" % (tag, version, npm_version, publish))
-          errors = []
-          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
-              errors.append("tag %r is not vX.Y.Z" % tag)
-          if tag != "v" + version:
-              errors.append("tag %s != pyproject.toml version %s" % (tag, version))
-          if tag != "v" + base:
-              errors.append("tag %s != package.json version %s (base %s)" % (tag, npm_version, base))
-          for e in errors:
-              print("::error::" + e)
-          if errors:
-              sys.exit(1)
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write("version=%s\nnpm_version=%s\nprerelease=%s\npublish=%s\n"
-                        % (version, npm_version, str("-" in npm_version).lower(), str(publish).lower()))
-          PY
+        run: python .github/scripts/release_check.py
       - run: npm install --no-package-lock --legacy-peer-deps
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
@@ -132,7 +106,7 @@ jobs:
 
   pypi:
     needs: [verify, build]
-    if: needs.verify.outputs.publish == 'true'
+    if: needs.verify.outputs.pypi == 'true'
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -151,7 +125,7 @@ jobs:
 
   npm:
     needs: [verify, build]
-    if: needs.verify.outputs.publish == 'true'
+    if: needs.verify.outputs.npm == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write

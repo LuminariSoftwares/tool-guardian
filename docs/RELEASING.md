@@ -41,22 +41,38 @@ tokens**. Delete any npm automation token at **npmjs.com → Access Tokens**. Op
 package's **Settings → Publishing access**, choose **Require two-factor authentication and
 disallow tokens**. Trusted publishing keeps working with that setting.
 
+## Versions
+
+PyPI and npm are independent version lines. For example, PyPI can be at `0.11.0` while npm is at
+`0.1.0-beta.1`.
+
+| | Where the version lives | When it is published |
+|---|---|---|
+| Release tag | `vX.Y.Z` = `v` + `pyproject.toml`'s `version`, exactly as written there (PEP 440, e.g. `v0.11.0`, `v1.0.0rc1`) | — |
+| PyPI `tool-guardian` | `pyproject.toml` | when that version is not on PyPI yet |
+| npm `dsh-tool-guardian` | `package.json`, unrelated to the tag | only when that exact version is not on npm yet (`npm view dsh-tool-guardian@<version> version` finds nothing); otherwise the npm job is skipped with a notice |
+
+A release where neither version is new fails with "nothing to publish". A PyPI-only patch (bump
+`pyproject.toml`, leave `package.json` alone) publishes PyPI and skips npm.
+
 ## Every release
 
-1. **Bump the versions in a PR.** Set `version` in `pyproject.toml` to `X.Y.Z`. Set `version` in
-   `package.json` to `X.Y.Z` or to a prerelease of it, e.g. `X.Y.Z-beta.1`. Also update the
-   README line naming both versions and `server.json`. Move the CHANGELOG `## Unreleased` entries
-   under a heading for the new versions. The `release` workflow runs on that PR as a dry run: it
-   checks the versions, runs the tests, builds, runs `twine check` and runs `npm publish
-   --dry-run`.
+1. **Bump the versions in a PR.** Bump `version` in `pyproject.toml`, in `package.json`, or in
+   both. Also update the README line naming both versions and `server.json`. Move the CHANGELOG
+   `## Unreleased` entries under a heading for the new versions. The `release` workflow runs on
+   that PR as a dry run: it checks the versions against both registries, runs the tests, builds,
+   runs `twine check` and runs `npm publish --dry-run`.
 2. **Merge the PR** once CI is green.
 3. **Create the GitHub Release.** On github.com, go to **Releases → Draft a new release**. Under
-   **Choose a tag**, type `vX.Y.Z` and pick **Create new tag on publish**, with target `main`.
+   **Choose a tag**, type `v` + the `pyproject.toml` version (e.g. `v0.11.0`) and pick **Create
+   new tag on publish**, with target `main`.
    Paste the version's CHANGELOG section as the notes. Click **Publish release**.
 4. **Watch the workflow.** Under **Actions → release**, the run has four jobs: `verify`, `build`,
    `pypi`, `npm`.
-   - `verify` fails unless the tag `vX.Y.Z` equals the `pyproject.toml` version and equals the
-     `package.json` version with its prerelease suffix removed. It also fails if the tests fail.
+   - `verify` fails unless the tag equals `v` + the `pyproject.toml` version. It also fails if
+     neither version is new, or if the tests fail.
+   - `pypi` runs only when the PyPI version is new. `npm` runs only when the `package.json`
+     version is new.
    - A non-prerelease npm version is published as `latest`.
    - A prerelease is published under `beta`, and then `latest` is moved to it.
 5. **Check both registries.**
