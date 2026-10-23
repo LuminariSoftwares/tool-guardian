@@ -6,36 +6,32 @@ labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
-      value: "Tell us about a feature that would improve tool-guardian."
+      value: |
+        Feature requests are welcome. Opening one does not promise a timeline: the answer may be
+        "later" or "not here", and it will come with the reason. See
+        [SUPPORT.md](https://github.com/LuminariSoftwares/tool-guardian/blob/main/SUPPORT.md)
+        for what this project will not do.
 
   - type: textarea
-    id: problem
+    id: goal
     attributes:
-      label: "Problem or Limitation"
-      description: "What is the current limitation or pain point?"
-      placeholder: "The router doesn't support tool result caching, so the same tool is called multiple times for identical inputs..."
+      label: "What you are trying to do"
+      description: "The task or problem, not the feature."
     validations:
       required: true
 
   - type: textarea
-    id: solution
+    id: tried
     attributes:
-      label: "Proposed Solution"
-      description: "How would you solve this? What would the feature do?"
-      placeholder: "Add a simple in-memory cache for tool results keyed by tool name and input hash..."
+      label: "What you tried"
+      description: "Commands, config or workarounds, and where they fell short."
     validations:
       required: true
 
-  - type: input
-    id: context
-    attributes:
-      label: "Context: Model, Backend, and Window Size"
-      description: "Where did you encounter this limitation?"
-      placeholder: "mistral 7B on Ollama, context window 8192"
-
   - type: textarea
-    id: impact
+    id: change
     attributes:
-      label: "Expected Impact"
-      description: "What would improve? Context savings? Speed? Include numbers if available."
-      placeholder: "Could reduce redundant tool calls by 15-20% in typical coding workflows"
+      label: "What would change"
+      description: "What you would be able to do, or what would get better, if this existed. Numbers help."
+    validations:
+      required: true

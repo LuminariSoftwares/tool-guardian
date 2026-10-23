@@ -1,5 +1,7 @@
 # Contributing to tool-guardian
 
+Need help? See [SUPPORT.md](SUPPORT.md).
+
 ## Welcome
 
 This project exists to make local models usable in long coding sessions by keeping tool definitions out of the context window. The most valuable contributions are bug reports with real numbers—your model name, backend, context size, and token counts before and after tool management.

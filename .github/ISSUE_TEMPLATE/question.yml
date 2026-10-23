@@ -1,0 +1,26 @@
+name: Question
+description: Ask how something works or whether it is supported
+title: "[Question] "
+labels: ["question"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        There are no Discussions on this repository; questions are issues with the `question` label.
+        Check the README and [docs/first-5-minutes.md](https://github.com/LuminariSoftwares/tool-guardian/blob/main/docs/first-5-minutes.md)
+        first. For something that is broken, use the bug report form instead.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: "Your question"
+      description: "What are you trying to do, and what is unclear?"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "Version (optional)"
+      description: "The output of `tool-guardian --version`"
