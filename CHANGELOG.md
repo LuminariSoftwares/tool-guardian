@@ -14,6 +14,10 @@ Docs, tests and CI only; no runtime change.
   publishes with short-lived OIDC credentials and signed provenance; no stored registry credential. Owner steps and
   the one-time registry setup: `docs/RELEASING.md`. `tests/test_release_workflow.py` fails if the workflow loses
   `id-token: write` or gains a password, token input or secret.
+- **Support kit:** `SUPPORT.md` (one maintainer, best effort, acknowledgement within a day, no fix-time promise), issue forms for
+  bug reports (version, OS, Python, exact command, full output, expected; required "I ran the quick start as written"),
+  feature requests and questions, blank issues off, private security link. `tests/test_support_kit.py` fails if blank issues
+  come back on, a form stops being valid, or `SUPPORT.md` disappears; PyYAML joins `requirements-dev.txt` (dev only).
 - **CI actions on Node 24:** `actions/checkout` v7.0.1, `actions/setup-python` v7.1.0, `actions/setup-node` v7.1.0.
 
 ## dsh-tool-guardian 0.8.0-beta.1 / PyPI tool-guardian 0.8.0 (2026-10-22)

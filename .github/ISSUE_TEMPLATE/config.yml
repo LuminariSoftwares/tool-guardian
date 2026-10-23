@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Security Vulnerability
+  - name: Security issue
     url: https://github.com/LuminariSoftwares/tool-guardian/security/advisories/new
     about: Report security vulnerabilities privately, not as a public issue
+  - name: Question
+    url: https://github.com/LuminariSoftwares/tool-guardian/issues/new?template=question.yml
+    about: There are no Discussions. Open an issue with the question label (this link opens the Question form).
