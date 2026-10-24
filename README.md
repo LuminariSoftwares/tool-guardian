@@ -327,7 +327,7 @@ Pure standard library — nothing else to install.
 
 > PyPI and npm now ship the same code: `pip install tool-guardian` (0.3.0+) for the MCP server, `dsh-tool-guardian` on npm for DSH.
 
-Which install is which: the Python package `tool-guardian` **0.8.0** is the MCP server (`pip install tool-guardian`, or `uvx tool-guardian`); the npm package `dsh-tool-guardian` **0.8.0-beta.1** is the DeepSeek Harness bundle. They are versioned separately.
+Which install is which: the Python package `tool-guardian` **0.8.1** is the MCP server (`pip install tool-guardian`, or `uvx tool-guardian`); the npm package `dsh-tool-guardian` **0.8.1-beta.1** is the DeepSeek Harness bundle. They are versioned separately.
 
 ## Configure
 

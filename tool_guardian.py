@@ -103,7 +103,7 @@ tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
 tg_prove = _optional("tg_prove")      # --prove: three bundled prompts against a model endpoint
 
-__version__ = "0.8.0"  # keep equal to pyproject.toml version
+__version__ = "0.8.1"  # keep equal to pyproject.toml version
 
 PROTOCOL = "2024-11-05"
 SKILL_FILE = "SKILL.md"
