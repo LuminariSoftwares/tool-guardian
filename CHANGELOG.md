@@ -1,9 +1,17 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.8.1-beta.1 / PyPI tool-guardian 0.8.1 (2026-10-24)
 
-Docs, tests and CI only; no runtime change.
+One hardening fix, plus docs, tests and CI.
 
+- **Skills directory containment.** The skills scanner (`TOOL_GUARDIAN_SKILLS`) followed a symlinked skill
+  directory, a symlinked group directory and a `SKILL.md` that was a symlink to a file outside the configured
+  root, so `list_skills` advertised those skills and `read_skill` returned their text (the router's own
+  `--skills-report` counted them). Every candidate is now resolved with `os.path.realpath` and skipped, with one
+  stderr line naming it, unless it lies inside the resolved skills root; a Windows junction resolves the same way.
+  A link that stays inside the root, and `..` in the configured root itself, still work.
+  `tests/test_skills_containment.py` (6 tests failed on main, all pass now; the junction case runs on Windows
+  only). `tools/list` unchanged at 1,090 tokens (budget 1,100).
 - **README first screen** names the tested clients and shows `python bench/bench_tokens.py` with its output;
   `tests/test_glama_quality.py` checks the block against the bench. DSH-only figures moved to a "DeepSeek Harness
   results" section, each with its scope.
