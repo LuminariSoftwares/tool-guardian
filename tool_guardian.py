@@ -246,6 +246,41 @@ def short(desc: str, words: int = 0) -> str:
     return " ".join(parts[:words]) + ("..." if len(parts) > words else "")
 
 
+def _inside(real_root, path):
+    """True when `path`, fully resolved (symlinks, junctions, ..), lies within `real_root`."""
+    try:
+        real = os.path.realpath(path)
+        return os.path.commonpath([real_root, real]) == real_root
+    except ValueError:      # different drives on Windows
+        return False
+
+
+def _skip(path):
+    sys.stderr.write("tool-guardian: skipped skill path outside its skills directory: %s\n" % path)
+
+
+def _contained_dirs(parent, real_root):
+    """The sub-directories of `parent` that resolve inside `real_root`; others are reported and skipped."""
+    found = []
+    for item in sorted(parent.iterdir()):
+        if item.is_dir():
+            if _inside(real_root, item):
+                found.append(item)
+            else:
+                _skip(item)
+    return found
+
+
+def _skill_in(directory, real_root):
+    skill_path = directory / SKILL_FILE
+    if not skill_path.is_file():
+        return []
+    if not _inside(real_root, skill_path):
+        _skip(skill_path)
+        return []
+    return _parse_skill(skill_path, directory.name)
+
+
 def scan_skills(dirs):
     """Scan skill directories and return skill metadata."""
     skills = []
@@ -262,22 +297,15 @@ def scan_skills(dirs):
         root_path = Path(root)
         if not root_path.is_dir():
             continue
+        real_root = os.path.realpath(root_path)
 
-        # Search one level deep
-        for item in root_path.iterdir():
-            if item.is_dir():
-                skill_path = item / SKILL_FILE
-                if skill_path.is_file():
-                    skills.extend(_parse_skill(skill_path, item.name))
-
-        # Search two levels deep
-        for group in root_path.iterdir():
-            if group.is_dir():
-                for item in group.iterdir():
-                    if item.is_dir():
-                        skill_path = item / SKILL_FILE
-                        if skill_path.is_file():
-                            skills.extend(_parse_skill(skill_path, item.name))
+        # Skills sit one level down (<root>/<skill>/SKILL.md) or two (<root>/<group>/<skill>/SKILL.md).
+        # Every candidate is resolved and must stay inside the resolved root: a link or junction
+        # that leaves it is skipped, never followed (a skill's text is handed to the model).
+        for item in _contained_dirs(root_path, real_root):
+            skills.extend(_skill_in(item, real_root))
+            for sub in _contained_dirs(item, real_root):
+                skills.extend(_skill_in(sub, real_root))
 
     # Sort by name and return
     skills.sort(key=lambda x: x["name"])
