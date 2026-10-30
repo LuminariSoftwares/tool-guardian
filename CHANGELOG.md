@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **`tool-guardian --usage [--since 7d|24h] [--json]`.** A counted report of what the router saved, read from the call
+  log: per server the router calls, errors and result characters in and out, the catalogue tokens avoided
+  (sessions x (the live servers' full `tools/list` cost - the router's own)), and the servers never called through
+  `call_tool` with what dropping them would shrink the catalogue by. Counts only; the log holds no argument values, so
+  the report has none. An empty window prints `no calls in window`; with `TOOL_GUARDIAN_CALL_LOG=""` it says the log is
+  off, as `--bypass-summary` does. `--since` is an exact flag and does not collide with `--bypass-summary`'s
+  `--since-hours`. New module `tg_usage.py`.
+- **`state.json` records the catalogue's token cost.** At router startup the `catalogue` object also stores `tokens`
+  (each live server's full `tools/list`, `est_tokens`) and `router_tokens` (the router's own `tools/list`); `servers`
+  and `updated` are unchanged. `tests/test_p110_a4.py` is the acceptance file.
+- The router's `tools/list` is unchanged: `BUDGET = 1100` and `BUDGET_SMALL = 620` in
+  `tests/test_tools_list_budget.py` still hold.
+
 ## dsh-tool-guardian 0.8.2-beta.1 / PyPI tool-guardian 0.8.2 (2026-10-30)
 
 Terse mode for small models, `llms.txt` for coding agents, and the CI Python 3.9 job moved to `ubuntu-24.04`.
