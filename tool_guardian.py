@@ -1728,7 +1728,7 @@ def annotate(tool: dict) -> dict:
 # list_groups_with_costs, no title repeated inside `annotations`. Names, types, enums, defaults,
 # `required` and the four hints stay as in the default set (tests/test_p110_a5.py). The default
 # set is untouched. Each description is <= 160 chars; list_capabilities still names the live
-# servers (docs/adr/0002) -- names only, and cut with "..." if a long list would pass 160.
+# servers (docs/adr/0002) -- names only; a long list is cut with ", +N more".
 ROUTER_TOOLS_TERSE = {
     "list_capabilities": "List the tools on connected servers. Call first, then call_tool. %s",
     "search_capabilities": "Find a tool by keyword on every server; cheaper than list_capabilities.",
@@ -1743,15 +1743,20 @@ TERSE_LIST_LIMIT = 160
 
 
 def terse_list_capabilities(backends: dict) -> str:
-    """The terse list_capabilities description: the live server names, cut to fit."""
+    """The terse list_capabilities description: the live server names that fit, then
+    ", +N more (list_capabilities shows all)" so the model knows the rest exist."""
     head = ROUTER_TOOLS_TERSE["list_capabilities"]
-    names = ", ".join(n for n, b in sorted(backends.items()) if b.status == "ok")
+    names = [n for n, b in sorted(backends.items()) if b.status == "ok"]
     if not names:
         return "List the tools on connected servers. No server is reachable yet; this says why."
-    room = TERSE_LIST_LIMIT - len(head % "Servers: ")
-    if len(names) > room:
-        names = names[:max(room - 3, 0)].rstrip(", ") + "..."
-    return head % ("Servers: " + names)
+    shown = list(names)
+    while True:
+        more = len(names) - len(shown)
+        text = head % ("Servers: " + ", ".join(shown)
+                       + (", +%d more (list_capabilities shows all)" % more if more else ""))
+        if len(text) <= TERSE_LIST_LIMIT or not shown:
+            return text[:TERSE_LIST_LIMIT]
+        shown.pop()
 
 
 def tersify(tool: dict, backends: dict) -> dict:
