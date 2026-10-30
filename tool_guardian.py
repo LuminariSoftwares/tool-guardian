@@ -120,7 +120,8 @@ def _env_float(name: str, default: float) -> float:
 
 
 # TOOL_GUARDIAN_PRESET: named defaults for the two catalogue knobs below. "small" is for
-# 8k-context local models. An explicit TOOL_GUARDIAN_CATALOGUE_CHARS / _DESC_WORDS wins.
+# 8k-context local models and also turns on TOOL_GUARDIAN_TERSE (the router tools' own
+# descriptions, ROUTER_TOOLS_TERSE). An explicit TOOL_GUARDIAN_CATALOGUE_CHARS / _DESC_WORDS wins.
 #   catalogue_chars  each server's block in list_capabilities is cut at this many chars (0 = no cap)
 #   desc_words       words of a tool or server description shown in catalogue lines
 PRESETS = {
@@ -133,7 +134,7 @@ def read_tunables() -> None:
     """The TOOL_GUARDIAN_* tunables, from the environment. Called at import and again in
     main() after the .env is loaded -- a value set only in .env must still count."""
     global START_TIMEOUT, CALL_TIMEOUT, CHARS_PER_TOKEN, LOG_PATH, SKILLS_DIRS
-    global LADDER_ON, RAW_RESULTS, CALL_LOG, DESCRIBE_DETAIL, CATALOGUE_CHARS, DESC_WORDS
+    global LADDER_ON, RAW_RESULTS, CALL_LOG, DESCRIBE_DETAIL, CATALOGUE_CHARS, DESC_WORDS, TERSE
     START_TIMEOUT = _env_float("TOOL_GUARDIAN_START_TIMEOUT", 90.0)
     CALL_TIMEOUT = _env_float("TOOL_GUARDIAN_CALL_TIMEOUT", 120.0)
     CHARS_PER_TOKEN = _env_float("TOOL_GUARDIAN_CHARS_PER_TOKEN", 3.5)
@@ -142,7 +143,12 @@ def read_tunables() -> None:
     LADDER_ON = os.environ.get("TOOL_GUARDIAN_LADDER", "1") not in _OFF
     # describe_tool's default `detail`: compact (name, one line, required args) or full.
     DESCRIBE_DETAIL = os.environ.get("TOOL_GUARDIAN_DESCRIBE_DETAIL", "compact").strip().lower() or "compact"
-    preset = PRESETS.get(os.environ.get("TOOL_GUARDIAN_PRESET", "").strip().lower(), PRESETS["default"])
+    preset_name = os.environ.get("TOOL_GUARDIAN_PRESET", "").strip().lower()
+    preset = PRESETS.get(preset_name, PRESETS["default"])
+    # Terse router tools (see ROUTER_TOOLS_TERSE): on for a truthy TOOL_GUARDIAN_TERSE, and
+    # under the `small` preset unless TOOL_GUARDIAN_TERSE is set -- an explicit 0 wins.
+    terse_env = os.environ.get("TOOL_GUARDIAN_TERSE", "").strip()
+    TERSE = (terse_env not in _OFF) if terse_env else preset_name == "small"
     CATALOGUE_CHARS = int(_env_float("TOOL_GUARDIAN_CATALOGUE_CHARS", preset["catalogue_chars"]))
     DESC_WORDS = max(1, int(_env_float("TOOL_GUARDIAN_DESC_WORDS", preset["desc_words"])))
     # The pre-0.3.0 result shape (the raw MCP envelope as indented JSON, cut at 20000).
@@ -1718,6 +1724,57 @@ def annotate(tool: dict) -> dict:
     return dict(tool, title=ann["title"], annotations=dict(ann))
 
 
+# TOOL_GUARDIAN_TERSE: one short sentence per router tool, no parameter descriptions, no
+# list_groups_with_costs, no title repeated inside `annotations`. Names, types, enums, defaults,
+# `required` and the four hints stay as in the default set (tests/test_p110_a5.py). The default
+# set is untouched. Each description is <= 160 chars; list_capabilities still names the live
+# servers (docs/adr/0002) -- names only; a long list is cut with ", +N more".
+ROUTER_TOOLS_TERSE = {
+    "list_capabilities": "List the tools on connected servers. Call first, then call_tool. %s",
+    "search_capabilities": "Find a tool by keyword on every server; cheaper than list_capabilities.",
+    "describe_tool": "Get one backend tool's arguments before call_tool.",
+    "call_tool": "Invoke a tool on a server. This answers the user; the others only find names.",
+    "retrieve_spill": "Read back the full original of a result call_tool shortened, by its id.",
+    "list_skills": None,
+    "read_skill": None,
+}
+TERSE_DROPPED = ("list_groups_with_costs",)
+TERSE_LIST_LIMIT = 160
+
+
+def terse_list_capabilities(backends: dict) -> str:
+    """The terse list_capabilities description: the live server names that fit, then
+    ", +N more (list_capabilities shows all)" so the model knows the rest exist."""
+    head = ROUTER_TOOLS_TERSE["list_capabilities"]
+    names = [n for n, b in sorted(backends.items()) if b.status == "ok"]
+    if not names:
+        return "List the tools on connected servers. No server is reachable yet; this says why."
+    shown = list(names)
+    while True:
+        more = len(names) - len(shown)
+        text = head % ("Servers: " + ", ".join(shown)
+                       + (", +%d more (list_capabilities shows all)" % more if more else ""))
+        if len(text) <= TERSE_LIST_LIMIT or not shown:
+            return text[:TERSE_LIST_LIMIT]
+        shown.pop()
+
+
+def tersify(tool: dict, backends: dict) -> dict:
+    """*tool* in its terse form: one-sentence description, no parameter descriptions, no
+    `title` inside `annotations` (the top-level `title` stays). Tools without a terse
+    description keep their own (the skill tools, whose text carries the skill catalogue)."""
+    desc = ROUTER_TOOLS_TERSE.get(tool["name"])
+    if tool["name"] == "list_capabilities":
+        desc = terse_list_capabilities(backends)
+    schema = dict(tool["inputSchema"])
+    schema["properties"] = {k: {pk: pv for pk, pv in v.items() if pk != "description"}
+                            for k, v in (schema.get("properties") or {}).items()}
+    out = dict(tool, description=desc or tool["description"], inputSchema=schema)
+    if "annotations" in out:
+        out["annotations"] = {k: v for k, v in out["annotations"].items() if k != "title"}
+    return out
+
+
 def model_cost(tools) -> int:
     """Token estimate of what a model is sent: name, description, schema. Clients use the
     annotations for UI and permission prompts, so they are not counted as context cost."""
@@ -1737,8 +1794,11 @@ def build_all_tools(backends: dict) -> list:
     tools = build_router_tools(backends)
     head = [t for n in CORE_TOOLS for t in tools if t["name"] == n]
     tail = [t for t in tools if t["name"] not in CORE_TOOLS]
-    return [annotate(t) for t in (head + tail + build_extra_tools()
-                                  + build_skill_tools(scan_skills(SKILLS_DIRS)))]
+    tools = [annotate(t) for t in (head + tail + build_extra_tools()
+                                   + build_skill_tools(scan_skills(SKILLS_DIRS)))]
+    if TERSE:
+        tools = [tersify(t, backends) for t in tools if t["name"] not in TERSE_DROPPED]
+    return tools
 
 
 def _reconfigure_stdin() -> None:

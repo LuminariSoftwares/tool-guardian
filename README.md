@@ -423,10 +423,17 @@ launches it.
   | `TOOL_GUARDIAN_CATALOGUE_CHARS` | 0 (no cap) | 1500 | each server's block in `list_capabilities` is cut at this many characters, with a `[+N more tools not shown ...]` line pointing at `search_capabilities` |
   | `TOOL_GUARDIAN_DESC_WORDS` | 12 | 6 | words of a tool, server or skill description shown in catalogue and search lines |
 
-  Set either variable to override the preset. Search ranking still scores 12
+  `small` also turns on `TOOL_GUARDIAN_TERSE` (below). Set either variable to override the preset. Search ranking still scores 12
   description words, the output ladder and every other setting are unchanged, and
   `describe_tool` is compact in both. On the seven bench catalogues the seven
   per-server listings total 9,582 characters with `small` against 16,274 without.
+
+- **Terse router tools.** `TOOL_GUARDIAN_TERSE=1` serves the router's own tools with one-sentence
+  descriptions (at most 160 characters), no per-parameter descriptions, and without
+  `list_groups_with_costs`. Names, argument types, enums, defaults, required arguments and the MCP
+  annotation hints are unchanged, and `list_capabilities` still names the live servers. `tools/list`
+  drops from 1,090 to about 617 tokens. It is on under `TOOL_GUARDIAN_PRESET=small` unless you set
+  `TOOL_GUARDIAN_TERSE=0`; unset or `0` leaves the default payload exactly as it was.
 
 - **Variable expansion.** `${VAR}`, `$VAR` and `%VAR%` are expanded in each
   backend's `args` **and in its `env` values** from the environment; unknown
@@ -725,7 +732,7 @@ Four small MIT-licensed tools for people running local models. Each does one job
 - **stdio servers only.** An HTTP/SSE server (a `"url"` entry) is reported `UNSUPPORTED` — load it directly rather than through here.
 - It does not merge or rename tools; it proxies them faithfully. `call_tool(server, tool, args)` reaches the real tool unchanged.
 - Over plain MCP it cannot see a client's shell calls; see [bypass detection and its limits](#bypass-detection-over-plain-mcp-and-its-limits).
-- **The router's own tools cost about 1,100 tokens** of `tools/list` (with no backends; more with a long server list). With one small server behind it, that is close to break-even; it pays off from a few servers up. There is no terse mode for the descriptions yet — the budget keeps them terse for everyone instead.
+- **The router's own tools cost about 1,100 tokens** of `tools/list` (with no backends; more with a long server list). With one small server behind it, that is close to break-even; it pays off from a few servers up. `TOOL_GUARDIAN_TERSE=1` (or `TOOL_GUARDIAN_PRESET=small`) brings it to ~620 tokens.
 - The token figures are an estimate (characters ÷ 3.5) unless `tiktoken` is installed.
 - It has no card in the DSH web UI; configure it in `~/.dsh/settings.yaml` ([docs/dsh-settings.md](docs/dsh-settings.md)).
 

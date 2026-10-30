@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Terse mode.** `TOOL_GUARDIAN_TERSE=1` (also on under `TOOL_GUARDIAN_PRESET=small`; an explicit
+  `TOOL_GUARDIAN_TERSE=0` turns it off even then) serves the router tools with one-sentence descriptions of at
+  most 160 characters, no per-parameter descriptions, no repeated `title` inside `annotations`, and without
+  `list_groups_with_costs`. Names, types, enums, defaults, `required` and the four annotation hints are unchanged,
+  and `list_capabilities` still names the live servers (docs/adr/0002). Unset or `0` leaves the default payload
+  byte-identical. `tests/test_tools_list_budget.py` gains `BUDGET_SMALL = 620`; `BUDGET = 1100` is unchanged.
+  Measured `tools/list`, end to end as the existing test does: 1,090 tokens default, 617 terse (57 % of the default).
+  The preset used to trim the catalogue but not the router's own six tools, so `small` still cost 1,090 tokens, about
+  13 % of an 8k window before the first message. `tests/test_p110_a5.py` is the acceptance file.
+
 ## dsh-tool-guardian 0.8.1-beta.1 / PyPI tool-guardian 0.8.1 (2026-10-24)
 
 One hardening fix, plus docs, tests and CI.
