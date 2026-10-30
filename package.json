@@ -29,6 +29,7 @@
     "tg_ceiling.py",
     "tg_prove.py",
     "README.md",
+    "llms.txt",
     "CHANGELOG.md",
     "LICENSE"
   ],

@@ -12,6 +12,12 @@
   The preset used to trim the catalogue but not the router's own six tools, so `small` still cost 1,090 tokens, about
   13 % of an 8k window before the first message. `tests/test_p110_a5.py` is the acceptance file.
 
+- **`llms.txt` and a one-prompt agent install.** A short, link-only map for coding agents (the llmstxt.org
+  convention): install, configure (including the rule that a config in the current directory is not loaded without
+  the user's consent), the six router tools, and the limits. The README quick start now carries one line to paste to
+  an agent that points it at the raw `llms.txt`. `llms.txt` ships in the npm package (`package.json` "files").
+  `tests/test_p110_a6.py` checks the structure, that every link resolves, and the README line.
+
 ## dsh-tool-guardian 0.8.1-beta.1 / PyPI tool-guardian 0.8.1 (2026-10-24)
 
 One hardening fix, plus docs, tests and CI.

@@ -61,6 +61,8 @@ Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-gua
 
 ## Quick start (60 seconds)
 
+Or tell your coding agent: `Install tool-guardian (docs: https://raw.githubusercontent.com/LuminariSoftwares/tool-guardian/main/llms.txt) and route my MCP servers through it.`
+
 Nothing to install: [`uvx`](https://docs.astral.sh/uv/) runs it from PyPI. The example server below
 is the MCP filesystem server, which runs with `npx`, so that one line needs Node.js — the router
 itself is Python 3.9+ and standard library only.
