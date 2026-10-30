@@ -1994,7 +1994,8 @@ def main(argv=None) -> int:
     ap.add_argument("--usage", action="store_true",
                     help="what the router saved, counted from the call log, then exit")
     ap.add_argument("--since", default="",
-                    help="with --usage: only the last N days or hours, e.g. 7d or 24h (default: the whole log)")
+                    help="with --usage or --bypass-summary: only the last N days or hours, e.g. 7d or 24h "
+                         "(default: the whole log / 24 hours); with --bypass-summary a bare number is hours")
     ap.add_argument("--json", dest="as_json", action="store_true",
                     help="with --usage: one JSON object instead of text")
     ap.add_argument("--hook-pretooluse", dest="hook", action="store_true",
@@ -2018,7 +2019,16 @@ def main(argv=None) -> int:
             print(out)
         return code
     if a.bypass_summary:
-        print(bypass_summary(a.session, a.since_hours))
+        hours = a.since_hours
+        if a.since:
+            try:
+                # Before --usage existed `--since 24` abbreviated --since-hours, so a bare number stays hours.
+                hours = float(a.since) if re.fullmatch(r"\d+(\.\d+)?", a.since.strip()) \
+                    else tg_usage.parse_since(a.since) / 3600.0
+            except (ValueError, AttributeError) as exc:
+                print("tool-guardian: %s" % exc, file=sys.stderr)
+                return 2
+        print(bypass_summary(a.session, hours))
         return 0
     if a.usage:
         try:

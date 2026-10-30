@@ -1,4 +1,4 @@
-"""P110 S5 (A4) acceptance -- a counted usage report. Written by the O5 overseer; DO NOT EDIT.
+"""P110 S5 (A4) acceptance (rev 2, 2026-10-30) -- a counted usage report. Written by the O5 overseer; DO NOT EDIT.
 
 Why: "what does it actually save me?" is the first question an outside user asks, and today the answer is a
 README bench line. The call log (~/.tool-guardian/calls.jsonl, ON by default, counts only -- never argument values)
@@ -71,7 +71,11 @@ def u():
 def test_module_is_stdlib_and_packaged():
     src = (ROOT / "tg_usage.py").read_text(encoding="utf-8")
     imports = set(re.findall(r"^(?:from|import)\s+([A-Za-z_][\w]*)", src, re.M))
-    assert imports <= set(sys.stdlib_module_names) | {"tg_state", "tool_guardian"}, imports
+    # rev 2: sys.stdlib_module_names is Python 3.10+; the package supports 3.9 (CI caught it on PR #23).
+    stdlib = set(getattr(sys, "stdlib_module_names", ())) or {
+        "__future__", "argparse", "collections", "datetime", "json", "math", "os", "pathlib", "re", "sys", "time",
+        "typing"}
+    assert imports <= stdlib | {"tg_state", "tool_guardian"}, imports
     py = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert '"tg_usage"' in re.search(r"^py-modules = \[(.*?)\]", py, re.M).group(1)
     assert "tg_usage.py" in json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["files"]
