@@ -22,12 +22,15 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 BUDGET = 1100
+# TOOL_GUARDIAN_TERSE=1 (or PRESET=small): measured 617 tokens on 2026-10-30 against 1,090 for the default.
+BUDGET_SMALL = 620
 CHARS_PER_TOKEN = 3.5
 
 
-def tools_list_tokens(tmp_path, servers=None):
+def tools_list_tokens(tmp_path, servers=None, env=None):
     """(tokens, tools) from the real server over stdio. `servers` defaults to none configured,
-    which is what a directory crawler and a client started before any config both see."""
+    which is what a directory crawler and a client started before any config both see. `env`
+    adds variables; TOOL_GUARDIAN_PRESET and TOOL_GUARDIAN_TERSE are cleared first."""
     cfg = tmp_path / "mcp.json"
     cfg.write_text(json.dumps({"mcpServers": servers or {}}), encoding="utf-8")
     requests = [{"jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -38,7 +41,10 @@ def tools_list_tokens(tmp_path, servers=None):
     run = subprocess.run([sys.executable, str(ROOT / "tool_guardian.py"), "--config", str(cfg)],
                          input="".join(json.dumps(m) + "\n" for m in requests),
                          capture_output=True, text=True, timeout=120,
-                         env=dict(os.environ, TOOL_GUARDIAN_HOME=str(tmp_path)), cwd=str(tmp_path))
+                         env=dict({k: v for k, v in os.environ.items()
+                                   if k not in ("TOOL_GUARDIAN_PRESET", "TOOL_GUARDIAN_TERSE")},
+                                  TOOL_GUARDIAN_HOME=str(tmp_path), **(env or {})),
+                         cwd=str(tmp_path))
     replies = {m["id"]: m for m in map(json.loads, run.stdout.splitlines()) if "id" in m}
     tools = replies[2]["result"]["tools"]
     return round(len(json.dumps(tools)) / CHARS_PER_TOKEN), tools
@@ -51,6 +57,15 @@ def test_tools_list_fits_the_budget(tmp_path):
     assert tokens <= BUDGET, (
         "tools/list is %d tokens, budget %d (%d over). Per tool: %s"
         % (tokens, BUDGET, tokens - BUDGET, per_tool))
+
+
+def test_terse_tools_list_fits_the_small_budget(tmp_path):
+    tokens, tools = tools_list_tokens(tmp_path, env={"TOOL_GUARDIAN_TERSE": "1"})
+    per_tool = ", ".join("%s %d" % (t["name"], round(len(json.dumps(t)) / CHARS_PER_TOKEN))
+                         for t in tools)
+    assert tokens <= BUDGET_SMALL, (
+        "terse tools/list is %d tokens, budget %d (%d over). Per tool: %s"
+        % (tokens, BUDGET_SMALL, tokens - BUDGET_SMALL, per_tool))
 
 
 def test_the_payload_measured_is_the_whole_router_surface(tmp_path):
