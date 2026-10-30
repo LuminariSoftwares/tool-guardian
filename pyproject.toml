@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tool-guardian"
-version = "0.8.1"
+version = "0.8.2"
 description = "An MCP router that keeps tool definitions from filling the context window — it fronts your MCP servers behind six small generic tools and discovers the rest on demand."
 readme = "README.md"
 requires-python = ">=3.9"

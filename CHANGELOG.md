@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.8.2-beta.1 / PyPI tool-guardian 0.8.2 (2026-10-30)
+
+Terse mode for small models, `llms.txt` for coding agents, and the CI Python 3.9 job moved to `ubuntu-24.04`.
 
 - **Terse mode.** `TOOL_GUARDIAN_TERSE=1` (also on under `TOOL_GUARDIAN_PRESET=small`; an explicit
   `TOOL_GUARDIAN_TERSE=0` turns it off even then) serves the router tools with one-sentence descriptions of at
