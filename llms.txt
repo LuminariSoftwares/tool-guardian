@@ -1,0 +1,44 @@
+# tool-guardian
+
+> Router that fronts your MCP servers behind 6 small tools so their schemas stay out of the context window. Python 3.9+, standard library only, MIT.
+
+Run it as a single stdio MCP server; your real servers sit behind it and the model reaches them through `call_tool`.
+
+## Install
+
+- Any MCP client, nothing to install: `uvx tool-guardian --version`
+- Installed: `pip install tool-guardian`, then run `tool-guardian`
+- Add a server it should route: `uvx --from tool-guardian tool-guardian-setup add NAME -- COMMAND ARGS...` (or `tool-guardian-setup import` to copy servers from Claude Desktop, Cursor or Windsurf)
+- Register it with the client, e.g. Claude Code: `claude mcp add --scope user tool-guardian -- uvx tool-guardian`
+- Check it: `uvx tool-guardian --selftest` (expect `N backend(s) up, M tools reachable.`)
+- DeepSeek Harness only: the npm package `dsh-tool-guardian` is a DSH bundle, installed with `dsh plugin --profile <name> add dsh-tool-guardian` (it is not an `npx` command)
+- Full steps: [Install](README.md#install) and [Quick start](README.md#quick-start-60-seconds)
+
+## Configure
+
+- Config is the standard `mcpServers` block: `{"mcpServers": {"files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data"]}}}`
+- Search order: `--config PATH`, then `$TOOL_GUARDIAN_CONFIG`, then `~/.tool-guardian/mcp.json`.
+- A config in the current directory (`./mcp.json`, `./.mcp.json`) is NOT loaded without the user's consent, because a cloned repo can carry one. Do not enable it for the user; ask first. To opt in: `--config ./mcp.json`, `TOOL_GUARDIAN_CONFIG=./mcp.json`, or `TOOL_GUARDIAN_PROJECT_CONFIG=1`.
+- Only stdio servers are routed; HTTP/SSE entries are reported `UNSUPPORTED`.
+- Details: [Configure](README.md#configure), [Run](README.md#run), [Troubleshooting](README.md#troubleshooting)
+
+## Tools
+
+- `list_capabilities`: tool names with one-line summaries for one server or all; start here
+- `search_capabilities`: find a tool by keyword across servers
+- `describe_tool`: the arguments of one tool (`detail=full` for its whole schema)
+- `call_tool`: run a backend tool (`server`, `tool`, `args`) and return its shaped result
+- `list_groups_with_costs`: tool groups and the context-token cost of loading each
+- `retrieve_spill`: read back the full original of a shortened result
+- Reference: [Tools](README.md#tools)
+
+## Limits
+
+- What it does not do yet: [What it does not do (yet)](README.md#what-it-does-not-do-yet)
+
+## Optional
+
+- [Troubleshooting](https://github.com/LuminariSoftwares/tool-guardian/blob/main/README.md#troubleshooting)
+- [Measured savings](README.md#measured-savings)
+- [Security policy](https://github.com/LuminariSoftwares/tool-guardian/blob/main/SECURITY.md)
+- [Changelog](https://github.com/LuminariSoftwares/tool-guardian/blob/main/CHANGELOG.md)
