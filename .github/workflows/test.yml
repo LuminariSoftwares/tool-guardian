@@ -20,7 +20,8 @@ jobs:
         python-version: ["3.11"]
         include:
           # Every version the package claims to support, on the cheapest runner.
-          - os: ubuntu-latest
+          # ubuntu-latest (26.04) has no Python 3.9; 24.04 does (2026-10-30)
+          - os: ubuntu-24.04
             python-version: "3.9"
           - os: ubuntu-latest
             python-version: "3.10"
