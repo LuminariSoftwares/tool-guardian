@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.8.3-beta.1 / PyPI tool-guardian 0.8.3 (2026-10-30)
+
+A counted usage report: `tool-guardian --usage` shows what the router saved, per server, from the call log.
 
 - **`tool-guardian --usage [--since 7d|24h] [--json]`.** A counted report of what the router saved, read from the call
   log: per server the router calls, errors and result characters in and out, the catalogue tokens avoided
