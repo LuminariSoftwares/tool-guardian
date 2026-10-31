@@ -293,10 +293,12 @@ def make_handler(st):
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
-            self.wfile.write(("event: endpoint\r\ndata: /messages?session=%s\r\n\r\n" % sid).encode())
+            where = ("http://127.0.0.1:%d" % st.port if o.sse_absolute_endpoint else "") + "/messages?session=" + sid
+            self.wfile.write(("event: endpoint\r\ndata: %s\r\n\r\n" % where).encode())
             self.wfile.flush()
+            sent = 0
             try:
-                while True:
+                while o.sse_drop_after is None or sent < o.sse_drop_after:
                     try:
                         obj = q.get(timeout=15)
                     except queue.Empty:
@@ -307,8 +309,11 @@ def make_handler(st):
                         break
                     self.wfile.write(b"event: message\r\ndata: " + json.dumps(obj).encode() + b"\r\n\r\n")
                     self.wfile.flush()
+                    sent += 1
             except OSError:
                 pass
+            with st.lock:
+                st.sse_streams.pop(sid, None)     # a POST to a closed session is answered 404
             self.close_connection = True
 
         def _sse_post(self, body):
@@ -392,6 +397,10 @@ def build_parser():
     ap.add_argument("--reject-shape", choices=("tssdk", "empty"), default="tssdk",
                     help="legacy: how a modern request is refused (TypeScript-SDK -32600 body, or empty 400)")
     ap.add_argument("--delete-405", action="store_true", help="legacy: refuse DELETE with 405")
+    ap.add_argument("--sse-drop-after", type=int, default=None, metavar="N",
+                    help="sse: close the stream after N message events and forget the session (POSTs to it -> 404)")
+    ap.add_argument("--sse-absolute-endpoint", action="store_true",
+                    help="sse: send the endpoint event as an absolute URL instead of a path")
     ap.add_argument("--proxy-port", type=int, default=None, metavar="P",
                     help="also run a CONNECT-only stub proxy on P (0 = any free port)")
     return ap
