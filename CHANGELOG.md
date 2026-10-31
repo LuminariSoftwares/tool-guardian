@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- README "Ask a human": the dialog is now tested with Claude Code 2.1.302 on Windows -- what the box looks like, how to answer it, and that the model never sees a token.
+
 ## dsh-tool-guardian 0.9.0-beta.1 / PyPI tool-guardian 0.9.0 (2026-10-31)
 
 Remote MCP servers (Streamable HTTP, modern and legacy, plus the deprecated HTTP+SSE), a per-tool safety policy, and a human yes/no dialog for `ask` rules on clients that offer it. Nothing breaking: a 2024-11-05 client sees the router byte for byte as before.
