@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+Ask a human: an `ask` rule shows the user a yes/no dialog on clients that can, instead of a token the model hands back.
+
+- **Elicitation for `ask` rules.** When the client negotiated `2025-06-18` / `2025-11-25` and declared form
+  elicitation, `call_tool` sends one `elicitation/create` (a form with a boolean `confirm`; the message names
+  `<server>.<tool>` and carries the arguments as compact JSON up to 200 characters) and runs the tool only on
+  `accept` with `confirm: true`. Anything else returns `USER_DECLINED <outcome>` (`decline`, `cancel`, `unconfirmed`,
+  `error`, `timeout`) and runs nothing; no `CONFIRM_REQUIRED` is ever issued to such a client. Each question is a
+  `kind: "policy"` call-log row with `"via": "elicitation"` and its `outcome`.
+  `TOOL_GUARDIAN_ELICIT_TIMEOUT` (default 300 s) bounds the wait; a late reply is ignored; stdin closing mid-wait
+  ends the router with exit 0.
+- **2026-07-28 requests.** A `tools/call` whose `_meta` carries that version and form elicitation gets, for an `ask`
+  tool, `resultType: "input_required"` with one `elicitation/create` request and an integrity-protected, single-use
+  `requestState` bound to server, tool and arguments; the retry with `inputResponses` runs it. Every 2026-07-28
+  `tools/call` result now carries `resultType`. A request without elicitation gets the confirm token.
+- **`initialize` answers the client's version** (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`; any other
+  gets `2025-11-25`) instead of always `2024-11-05`; `capabilities` stay `{"tools": {}}`. Backends are still spoken to
+  in `2024-11-05`, `server/discover` is still `-32601`, and a `2024-11-05` session is byte-for-byte what it was
+  (`tests/fixtures/p110_a3b_floor.jsonl`). `serve()` now reads stdin on a thread so it can wait for the dialog's answer
+  while still answering other requests; a response from the client is no longer answered with `-32601`.
+- Not done: answering `server/discover`, the 2026-07-28 `tools/list` fields, sampling and roots. Tested against a
+  scripted client; `tests/test_p110_a3b.py` is the acceptance file.
+
 Per-tool safety policy: deny tools, ask before others (a confirm token), or make a session read-only.
 
 - **`policy.json`.** `$TOOL_GUARDIAN_POLICY`, else `~/.tool-guardian/policy.json`, read when the router starts:
@@ -14,7 +36,7 @@ Per-tool safety policy: deny tools, ask before others (a confirm token), or make
 - **`ask` returns `CONFIRM_REQUIRED <token>`.** Call `call_tool` again with the same server, tool and args plus a
   top-level `confirm`. The token is HMAC-SHA256 under a per-process secret, single use, 120 s
   (`TOOL_GUARDIAN_CONFIRM_TTL`). `confirm` is not in the `call_tool` schema, so `tools/list` is unchanged. **The model
-  confirms, not the user**; the human gate (elicitation) is a later release.
+  confirms, not the user** unless the client offers elicitation (see below).
 - **`tool-guardian --policy-check SERVER TOOL '<args-json>'`** prints `allow` / `deny <rule>` / `ask <rule>` and exits
   0 / 3 / 4; `--policy-check --list SERVER` prints one verdict per tool. Every deny and ask is a `kind: "policy"` row in
   the call log, and `--bypass-summary` adds `policy denials: <n>`. `--prove` runs with the policy off.

@@ -74,6 +74,7 @@ from __future__ import annotations
 import argparse
 import collections
 import hashlib
+import itertools
 import json
 import os
 import queue
@@ -113,7 +114,11 @@ tg_policy = _optional("tg_policy")    # per-tool deny / ask / readOnly policy an
 
 __version__ = "0.8.3"  # keep equal to pyproject.toml version
 
-PROTOCOL = "2024-11-05"
+PROTOCOL = "2024-11-05"   # what the BACKENDS are spoken to in; the client-facing versions are CLIENT_VERSIONS
+CLIENT_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")   # newest first: the fallback answer
+ELICIT_VERSIONS = ("2025-06-18", "2025-11-25")   # the legacy revisions that have elicitation
+MODERN = "2026-07-28"
+META = "io.modelcontextprotocol/"
 SKILL_FILE = "SKILL.md"
 _OFF = ("0", "false", "False", "off", "no")
 LEGACY_CAP = 20000
@@ -1128,6 +1133,14 @@ class Backend:
 
 # --------------------------------------------------------------- config ------
 
+class InputRequired(Exception):
+    """Raised inside call_tool on a 2026-07-28 request that needs the human's answer; serve() sends `result`."""
+
+    def __init__(self, result: dict):
+        super().__init__("input_required")
+        self.result = result
+
+
 class _PolicyMissing:
     """Stands in when a policy file exists but tg_policy.py is not beside tool_guardian.py: fail closed."""
     error = "tg_policy.py is not beside tool_guardian.py"
@@ -1171,10 +1184,16 @@ class Router:
         # code it was before the policy existed. `policy=False` is --prove, a capability test on a stub server.
         self.policy = None
         self._gate = None
+        self._state_gate = None
+        # What serve() knows about the client for the call in flight: {} (no human gate: S2's confirm token),
+        # {"mode": "elicit", "ask": fn} (a 2025-06-18+ session whose client offers form elicitation) or
+        # {"mode": "mrtr", "inputResponses": ..., "requestState": ...} (a capable 2026-07-28 request).
+        self._client = {}
         if policy:
             self.policy = self._load_policy()
-            if self.policy is not None:
-                self._gate = tg_policy.Gate(ttl=tg_policy.confirm_ttl()) if tg_policy is not None else None
+            if self.policy is not None and tg_policy is not None:
+                self._gate = tg_policy.Gate(ttl=tg_policy.confirm_ttl())
+                self._state_gate = tg_policy.Gate(ttl=tg_policy.elicit_timeout())   # requestState: a human may take a while
 
     @staticmethod
     def _load_policy():
@@ -1210,6 +1229,37 @@ class Router:
         return ("POLICY_DENIED %s\nThe user's tool-guardian policy blocks this tool (%s). Nothing ran. Do not retry "
                 "it or look for another way around it; tell the user." % (rule, why))
 
+    @staticmethod
+    def _declined_text(server: str, tool: str, outcome: str) -> str:
+        what = {"decline": "declined it", "cancel": "dismissed the question (or the client could not show it)",
+                "unconfirmed": "closed the question without saying yes", "error": "could not be asked (the client returned an error)",
+                "timeout": "did not answer in time"}.get(outcome, "did not confirm it")
+        return ("USER_DECLINED %s\n%s.%s was NOT run: the user %s. Do not retry it or look for another way "
+                "around it; tell the user." % (outcome, server, tool, what))
+
+    def _ask_human(self, b: "Backend", tool: str, args: dict, row: dict) -> str:
+        """An `ask` rule on a client that can show a dialog: the HUMAN answers, there is no token. "" = run it."""
+        ctx = self._client
+        sent = args.get("args") or {}
+        params = tg_policy.elicit_params(b.name, tool, sent)
+        if ctx["mode"] == "elicit":
+            outcome = ctx["ask"](params)
+        else:
+            ahash = tg_policy.args_hash(sent)
+            answers = ctx.get("inputResponses")
+            answer = answers.get(ELICIT_KEY) if isinstance(answers, dict) else None
+            state = ctx.get("requestState")
+            if answer is None or not isinstance(state, str) or not self._state_gate.redeem(state, b.name, tool, ahash):
+                raise InputRequired({"resultType": "input_required",
+                                     "inputRequests": {ELICIT_KEY: {"method": "elicitation/create", "params": params}},
+                                     "requestState": self._state_gate.issue(b.name, tool, ahash)})
+            outcome = tg_policy.elicit_outcome(answer)
+        self.log_call(dict(row, via="elicitation", outcome=outcome))
+        if outcome == "accept":
+            return ""
+        self._last_meta = {"is_error": False, "rule": "policy_declined"}
+        return self._declined_text(b.name, tool, outcome)
+
     def _policy_gate(self, b: "Backend", tool: str, args: dict) -> str:
         """The text to return INSTEAD of calling the tool, or "" to go ahead."""
         verdict, rule = self._verdict(b.name, tool)
@@ -1222,6 +1272,8 @@ class Router:
             self.log_call(row)
             self._last_meta = {"is_error": True, "rule": "policy_deny"}
             return self._denied_text(rule)
+        if self._client.get("mode") in ("elicit", "mrtr"):
+            return self._ask_human(b, tool, args, row)
         ahash = tg_policy.args_hash(args.get("args") or {})
         token = args.get("confirm")
         if token and self._gate.redeem(str(token), b.name, tool, ahash):
@@ -1504,6 +1556,9 @@ class Router:
         self._last_meta = {}
         try:
             text = self._handle(name, args)
+        except InputRequired:
+            self.log_call(dict(entry, ok=True, ms=int((time.time() - t0) * 1000), rule="policy_ask"))
+            raise
         except Exception as exc:
             self.log_call(dict(entry, ok=False, ms=int((time.time() - t0) * 1000),
                                error=type(exc).__name__))
@@ -1983,16 +2038,64 @@ def _reconfigure_stdin() -> None:
         pass
 
 
+ELICIT_KEY = "confirm"   # the one inputRequests key a 2026-07-28 ask uses
+
+
 def _error(mid, code: int, message: str) -> dict:
     """A JSON-RPC error object for one request id."""
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
 
 
 def serve(router: Router) -> int:
-    """Speak MCP on stdio. stdout is the protocol -- see log()."""
+    """Speak MCP on stdio. stdout is the protocol -- see log().
+
+    stdin is read by one thread into a queue, so a call that has to wait for the human (elicitation) can read the
+    client's answer without losing the other lines the client sends meanwhile: they are held, then handled in order."""
     _reconfigure_stdin()
     out = sys.stdout
-    for line in sys.stdin:
+    stdin = sys.stdin
+    inbox = queue.Queue()
+    held = collections.deque()
+
+    def read_stdin() -> None:
+        for raw in stdin:
+            inbox.put(raw)
+        inbox.put(None)
+
+    threading.Thread(target=read_stdin, name="tg-stdin", daemon=True).start()
+    ids = itertools.count(1)
+    session = {"elicit": False}   # the legacy session negotiated elicitation (set by `initialize`)
+
+    def ask(params: dict) -> str:
+        """Put one elicitation/create to the client and wait for its answer: accept, or why not."""
+        rid = next(ids)
+        out.write(json.dumps({"jsonrpc": "2.0", "id": rid, "method": "elicitation/create", "params": params}) + "\n")
+        out.flush()
+        deadline = time.monotonic() + tg_policy.elicit_timeout()
+        while True:
+            wait = deadline - time.monotonic()
+            if wait <= 0:
+                return "timeout"
+            try:
+                raw = inbox.get(timeout=wait)
+            except queue.Empty:
+                return "timeout"
+            if raw is None:
+                inbox.put(None)   # the main loop must see the end of stdin too
+                return "cancel"
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                msg = None
+            if (isinstance(msg, dict) and msg.get("method") is None and msg.get("id") == rid
+                    and ("result" in msg or "error" in msg)):
+                return "error" if "error" in msg else tg_policy.elicit_outcome(msg.get("result"))
+            held.append(raw)
+
+    while True:
+        line = held.popleft() if held else inbox.get()
+        if line is None:
+            break
         line = line.strip()
         if not line:
             continue
@@ -2009,9 +2112,14 @@ def serve(router: Router) -> int:
             continue
         method, mid = msg.get("method"), msg.get("id")
         if method == "initialize":
-            client = ((msg.get("params") or {}).get("clientInfo") or {}).get("name") or ""
+            ip = msg.get("params") or {}
+            client = (ip.get("clientInfo") or {}).get("name") or ""
             router.log_session_start("mcp", str(client))
-            reply = {"protocolVersion": PROTOCOL, "capabilities": {"tools": {}},
+            asked = ip.get("protocolVersion")
+            version = asked if asked in CLIENT_VERSIONS else CLIENT_VERSIONS[0]
+            session["elicit"] = (tg_policy is not None and version in ELICIT_VERSIONS
+                                 and tg_policy.form_elicitation(ip.get("capabilities")))
+            reply = {"protocolVersion": version, "capabilities": {"tools": {}},
                      "serverInfo": {"name": "tool-guardian", "version": __version__}}
         elif method == "tools/list":
             reply = {"tools": ROUTER_TOOLS}
@@ -2022,9 +2130,22 @@ def serve(router: Router) -> int:
             reply = {}
         elif method == "tools/call":
             p = msg.get("params") or {}
+            meta = p.get("_meta") if isinstance(p.get("_meta"), dict) else {}
+            modern = meta.get(META + "protocolVersion") == MODERN
+            ctx = {}
+            if tg_policy is not None:
+                if modern:
+                    if tg_policy.form_elicitation(meta.get(META + "clientCapabilities")):
+                        ctx = {"mode": "mrtr", "inputResponses": p.get("inputResponses"),
+                               "requestState": p.get("requestState")}
+                elif session["elicit"]:
+                    ctx = {"mode": "elicit", "ask": ask}
+            router._client = ctx
             try:
                 text = router.handle(p.get("name", ""), p.get("arguments") or {})
                 reply = {"content": [{"type": "text", "text": text}]}
+            except InputRequired as need:
+                reply = need.result
             except Exception as exc:  # noqa: BLE001
                 # As tool output, not a protocol error: the model must SEE the
                 # failure and say so rather than silently retry.
@@ -2032,6 +2153,12 @@ def serve(router: Router) -> int:
                                       "text": "ROUTER ERROR: %s: %s"
                                               % (type(exc).__name__, exc)}],
                          "isError": True}
+            finally:
+                router._client = {}
+            if modern:
+                reply.setdefault("resultType", "complete")   # every 2026-07-28 tools/call result carries it
+        elif method is None and ("result" in msg or "error" in msg):
+            continue  # a response to a request of ours (a late elicitation answer): never a request to answer
         elif mid is None:
             continue  # a notification
         else:
