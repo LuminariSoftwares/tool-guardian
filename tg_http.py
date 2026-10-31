@@ -1,11 +1,14 @@
 """Streamable HTTP client for remote MCP servers (stdlib only).
 
-Two protocol generations, told apart once per origin:
+Three protocol generations, told apart once per origin:
   modern  2026-07-28: stateless. First contact is `server/discover`; every request carries `_meta` and the
           Mcp-Method / Mcp-Name headers. Nothing to tear down.
   legacy  2025-11-25 / 2025-06-18 / 2025-03-26: `initialize`, an optional Mcp-Session-Id, a DELETE on close.
-Not spoken: OAuth (a 401 is reported with the server's metadata URL), resumability, the GET stream,
-`subscriptions/listen`, 2024-11-05 HTTP+SSE.
+  sse     2024-11-05 HTTP+SSE (Deprecated upstream, still out there): a GET opens one long stream whose first
+          event, `endpoint`, names the URL to POST to; every reply comes back on that stream, matched by id.
+          Chosen by `kind="sse"`, or as the last fallback of "auto" when both POSTs are refused with 400/404/405.
+Not spoken: OAuth (a 401 is reported with the server's metadata URL), resumability (`Last-Event-ID`),
+the standalone GET stream of the Streamable transports, `subscriptions/listen`.
 
 One POST per JSON-RPC message; the reply is JSON or a request-scoped SSE stream read up to the event whose id
 matches. HTTPS always verifies the certificate; plain http is for loopback unless `allow_insecure`.
@@ -19,12 +22,16 @@ import json
 import re
 import socket
 import ssl
+import threading
 import time
 import urllib.request
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 MODERN = "2026-07-28"
 LEGACY = ("2025-11-25", "2025-06-18", "2025-03-26")
+SSE_VERSION = "2024-11-05"
+FALLBACK_STATUS = (400, 404, 405)   # a refusal that may only mean "this server speaks the older HTTP+SSE"
+ENDPOINT_WAIT = 15.0                # how long an "auto" probe waits for the first `endpoint` event
 KINDS = ("tls", "connect", "proxy", "timeout", "http", "auth", "session_expired", "unsupported_version",
          "header_mismatch", "sse_parse")
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
@@ -54,6 +61,40 @@ class InputRequired(Exception):
 
 class _StreamEnded(Exception):
     pass
+
+
+class _SseGone(Exception):
+    """The HTTP+SSE stream is closed, or its POST endpoint answered 404 (the session is gone)."""
+
+
+class _SseStream:
+    """One open GET of the HTTP+SSE transport. A daemon thread fills it; requests wait on `cond`."""
+
+    def __init__(self, conn, sock, resp):
+        self.conn, self.sock, self.resp = conn, sock, resp     # http.client lets go of conn.sock once it answers
+        self.cond = threading.Condition()
+        self.endpoint = None       # absolute URL to POST to
+        self.replies = {}          # id -> JSON-RPC message
+        self.closed = False
+        self.why = ""
+        self.thread = None
+
+    def shut(self):
+        """Close the socket under the reader so its blocked read returns. Never raises."""
+        with self.cond:
+            self.closed = True
+            self.cond.notify_all()
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)         # wakes the reader out of its blocking read
+        except OSError:
+            pass
+        if self.thread is not None and self.thread is not threading.current_thread():
+            self.thread.join(CLOSE_TIMEOUT)              # resp.close() waits for a reader still inside readline
+        for step in (self.resp.close, self.conn.close, self.sock.close):
+            try:
+                step()
+            except (OSError, ValueError):
+                pass
 
 
 def parse_sse(lines_iter):
@@ -126,7 +167,7 @@ class HttpTransport:
     def __init__(self, url, headers=None, kind="auto", allow_insecure=False, start_timeout=90.0,
                  call_timeout=120.0, proxies=None, client_info=None):
         self.url, self.headers = url, dict(headers or {})
-        self.kind = kind                       # "auto" only until HTTP+SSE lands; "type" in the config maps here
+        self.kind = kind                       # "auto" / "http" (detect), or "sse" (HTTP+SSE only)
         self.allow_insecure = allow_insecure
         self.start_timeout, self.call_timeout = start_timeout, call_timeout
         self.proxies = proxies
@@ -134,10 +175,10 @@ class HttpTransport:
         self.era = self.protocol_version = self.session_id = self.server_info = None
         self._ids = itertools.count(1)
         self._parts = urlsplit(url)
+        self._sse = None                       # the open _SseStream of an HTTP+SSE session
 
     # ---- connection ----------------------------------------------------------------------------------
-    def _proxy_for(self, host):
-        scheme = self._parts.scheme
+    def _proxy_for(self, host, scheme):
         if host in LOOPBACK:                  # a proxy cannot reach the caller's own loopback
             return None
         proxies = self.proxies if self.proxies is not None else urllib.request.getproxies()
@@ -146,9 +187,10 @@ class HttpTransport:
             return None
         return urlsplit(proxy if "//" in proxy else "http://" + proxy)
 
-    def _open(self, timeout):
-        """(connection, request target, proxy name or None, extra headers); one connection per message."""
-        p = self._parts
+    def _open(self, timeout, parts=None):
+        """(connection, request target, proxy name or None, extra headers); one connection per message.
+        `parts` is the URL to reach (default: the configured one); HTTP+SSE POSTs go to the endpoint."""
+        p = parts or self._parts
         host, https = p.hostname or "", p.scheme == "https"
         if p.scheme not in ("http", "https") or not host:
             raise TransportError("connect", 0, "not an http(s) URL")
@@ -156,7 +198,7 @@ class HttpTransport:
             raise TransportError("tls", 0, PLAINTEXT)
         port = p.port or (443 if https else 80)
         target = (p.path or "/") + ("?" + p.query if p.query else "")
-        proxy = self._proxy_for(host)
+        proxy = self._proxy_for(host, p.scheme)
         timeout = max(timeout, 0.001)
         if proxy is None:
             if https:
@@ -173,7 +215,7 @@ class HttpTransport:
                                                context=ssl.create_default_context())
             conn.set_tunnel(host, port, headers=auth)
             return conn, target, pname, {}
-        return http.client.HTTPConnection(proxy.hostname, proxy.port or 80, timeout=timeout), self.url, pname, auth
+        return http.client.HTTPConnection(proxy.hostname, proxy.port or 80, timeout=timeout), p.geturl(), pname, auth
 
     # ---- one exchange --------------------------------------------------------------------------------
     def _headers(self, method, params, name, era, version):
@@ -204,10 +246,10 @@ class HttpTransport:
         hdrs = self._headers(method, params, name, era, version)
         return self._send("POST", json.dumps(body).encode("utf-8"), hdrs, rid, deadline)
 
-    def _send(self, verb, data, hdrs, rid, deadline):
+    def _send(self, verb, data, hdrs, rid, deadline, parts=None):
         conn, pname = None, None
         try:
-            conn, target, pname, extra = self._open(deadline - time.monotonic())
+            conn, target, pname, extra = self._open(deadline - time.monotonic(), parts)
             conn.request(verb, target, body=data, headers=dict(hdrs, **extra))
             resp = conn.getresponse()
             status = resp.status
@@ -229,23 +271,27 @@ class HttpTransport:
             return _Reply(status, rh, msg, raw)
         except TransportError:
             raise
-        except (socket.timeout, TimeoutError):
-            raise TransportError("timeout", 0, "no reply within the time allowed") from None
-        except ssl.SSLError as exc:
-            if "timed out" in str(exc):
-                raise TransportError("timeout", 0, "no reply within the time allowed") from None
-            raise TransportError("tls", 0, "%s: %s" % (type(exc).__name__, exc)) from None
-        except (OSError, http.client.HTTPException) as exc:
-            if pname and str(exc).startswith("Tunnel connection failed"):
-                kind = "proxy" if "407" in str(exc) else "connect"
-                raise TransportError(kind, 0, "proxy %s refused the tunnel to %s: %s"
-                                     % (pname, self._parts.netloc, exc)) from None
-            if pname and isinstance(exc, ConnectionError):
-                raise TransportError("proxy", 0, "could not reach proxy %s: %s" % (pname, exc)) from None
-            raise TransportError("connect", 0, "%s: %s" % (type(exc).__name__, exc)) from None
+        except (OSError, http.client.HTTPException) as exc:     # socket.timeout and ssl.SSLError are OSErrors
+            raise self._translate(exc, pname) from None
         finally:
             if conn is not None:
                 conn.close()
+
+    def _translate(self, exc, pname):
+        """The TransportError a socket-level failure stands for."""
+        if isinstance(exc, (socket.timeout, TimeoutError)):
+            return TransportError("timeout", 0, "no reply within the time allowed")
+        if isinstance(exc, ssl.SSLError):
+            if "timed out" in str(exc):
+                return TransportError("timeout", 0, "no reply within the time allowed")
+            return TransportError("tls", 0, "%s: %s" % (type(exc).__name__, exc))
+        if pname and str(exc).startswith("Tunnel connection failed"):
+            kind = "proxy" if "407" in str(exc) else "connect"
+            return TransportError(kind, 0, "proxy %s refused the tunnel to %s: %s"
+                                  % (pname, self._parts.netloc, exc))
+        if pname and isinstance(exc, ConnectionError):
+            return TransportError("proxy", 0, "could not reach proxy %s: %s" % (pname, exc))
+        return TransportError("connect", 0, "%s: %s" % (type(exc).__name__, exc))
 
     def _read_body(self, resp, conn, deadline, status):
         chunks, size = [], 0
@@ -330,6 +376,8 @@ class HttpTransport:
     def start(self):
         """Detect the era and return the discover or initialize result."""
         deadline = time.monotonic() + self.start_timeout
+        if self.kind == "sse":
+            return self._sse_start(deadline)
         version = MODERN
         for attempt in (1, 2):
             try:
@@ -354,7 +402,12 @@ class HttpTransport:
                 version = known[0]            # retry once, with a version the server listed
                 continue
             self._raise_http(reply)
-        return self._initialize(deadline)
+        try:
+            return self._initialize(deadline)
+        except TransportError as exc:
+            if exc.kind != "http" or exc.status not in FALLBACK_STATUS:
+                raise
+            return self._sse_fallback(exc, deadline)
 
     def _initialize(self, deadline):
         self.session_id = None
@@ -380,6 +433,8 @@ class HttpTransport:
         if self.era is None:
             raise TransportError("connect", 0, "transport not started")
         deadline = time.monotonic() + (self.call_timeout if timeout is None else timeout)
+        if self.era == "sse":
+            return self._sse_call(method, params, deadline)
         resends, reinit = 0, False
         while True:
             try:
@@ -401,12 +456,21 @@ class HttpTransport:
 
     def notify(self, method, params=None, _deadline=None):
         deadline = _deadline or time.monotonic() + self.call_timeout
+        if self.era == "sse":
+            try:
+                self._sse_post({"jsonrpc": "2.0", "method": method, **({"params": params} if params else {})},
+                               deadline)
+            except _SseGone:
+                pass                          # the next request finds the dead stream and reconnects
+            return
         reply = self._exchange(method, params, "", None, deadline, self.era, self.protocol_version)
         if reply.status == 401:
             self._raise_http(reply)
 
     def close(self):
-        """End a legacy session (DELETE; a 405 is fine). Modern has nothing to end. Never raises."""
+        """End a legacy session (DELETE; a 405 is fine) or an HTTP+SSE stream (no DELETE). Modern has nothing
+        to end. Never raises."""
+        self._sse_close()
         if self.era != "legacy" or not self.session_id:
             return
         hdrs = self._headers("", None, "", "legacy", self.protocol_version)
@@ -415,3 +479,177 @@ class HttpTransport:
             self._send("DELETE", None, hdrs, None, time.monotonic() + CLOSE_TIMEOUT)
         except TransportError:
             pass
+
+    # ---- 2024-11-05 HTTP+SSE ---------------------------------------------------------------------------
+    def _sse_fallback(self, refusal, deadline):
+        """Last step of "auto": both POSTs were refused, so try the GET. If that is no HTTP+SSE server either,
+        the refusal that sent us here is the error worth reporting (a 401 on the GET is worth reporting too)."""
+        try:
+            return self._sse_start(deadline, probe=True)
+        except TransportError as exc:
+            raise (exc if exc.kind == "auth" else refusal) from None
+
+    def _sse_open(self, deadline):
+        """GET the URL; returns the _SseStream once the server answered 200 text/event-stream."""
+        hdrs = {k: str(v) for k, v in self.headers.items() if k.lower() not in ("accept", "cache-control")}
+        hdrs.update({"Accept": "text/event-stream", "Cache-Control": "no-cache"})
+        conn, pname = None, None
+        try:
+            conn, target, pname, extra = self._open(deadline - time.monotonic())
+            conn.request("GET", target, headers=dict(hdrs, **extra))
+            sock = conn.sock
+            resp = conn.getresponse()
+            status = resp.status
+            rh = {k.lower(): v for k, v in resp.getheaders()}
+            ctype = rh.get("content-type", "").split(";")[0].strip().lower()
+            if status != 200 or ctype != "text/event-stream":
+                raw = self._read_body(resp, conn, deadline, status)
+                if status != 200:
+                    self._raise_http(_Reply(status, rh, None, raw))     # 401 is "auth"
+                raise TransportError("http", status, "the GET answered %r, not an event stream" % ctype)
+            sock.settimeout(None)             # the stream is long-lived; requests carry their own deadlines
+            stream = _SseStream(conn, sock, resp)
+            conn = None
+            return stream
+        except TransportError:
+            raise
+        except (OSError, http.client.HTTPException) as exc:
+            raise self._translate(exc, pname) from None
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def _sse_pump(self, st):
+        """Reader thread: fills `st` with the endpoint and the replies, and marks it closed when the stream ends."""
+        def lines():
+            while True:
+                try:
+                    line = st.resp.readline(1 << 20)
+                except http.client.IncompleteRead:
+                    return
+                if not line:
+                    return
+                yield line
+
+        try:
+            for ev in parse_sse(lines()):
+                kind = ev.get("event", "message")
+                with st.cond:
+                    if st.endpoint is None:
+                        if kind != "endpoint":
+                            st.why = "the first event was %r, not 'endpoint'" % kind
+                            return
+                        st.endpoint = ev["data"].strip()
+                        st.cond.notify_all()
+                        continue
+                if kind != "message":
+                    continue
+                try:
+                    obj = json.loads(ev["data"])
+                except ValueError:
+                    continue
+                with st.cond:
+                    for m in obj if isinstance(obj, list) else [obj]:
+                        if isinstance(m, dict) and m.get("id") is not None and ("result" in m or "error" in m):
+                            st.replies[m["id"]] = m
+                    st.cond.notify_all()
+        except (OSError, ValueError, http.client.HTTPException):
+            pass                              # a socket shut under the read, or a dropped connection
+        finally:
+            with st.cond:
+                st.closed = True
+                st.cond.notify_all()
+
+    def _sse_wait(self, st, deadline, ready):
+        """Block on `st.cond` until ready() is truthy; _SseGone if the stream closes first, timeout at the deadline."""
+        with st.cond:
+            while True:
+                got = ready()
+                if got is not None:
+                    return got
+                if st.closed:
+                    raise _SseGone(st.why or "the stream closed")
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TransportError("timeout", 0, "no reply within the time allowed")
+                st.cond.wait(left)
+
+    def _sse_start(self, deadline, probe=False):
+        """GET, read the endpoint, initialize (2024-11-05), notify. Returns the initialize result."""
+        self._sse_close()
+        st = self._sse_open(deadline)
+        st.thread = threading.Thread(target=self._sse_pump, args=(st,), daemon=True)
+        st.thread.start()
+        try:
+            wait_to = min(deadline, time.monotonic() + ENDPOINT_WAIT) if probe else deadline
+            try:
+                where = self._sse_wait(st, wait_to, lambda: st.endpoint)
+            except _SseGone as exc:
+                raise TransportError("http", 200, "no `endpoint` event: %s" % exc) from None
+            url = urljoin(self.url, where)
+            parts = urlsplit(url)
+            if (parts.scheme, parts.netloc) != (self._parts.scheme, self._parts.netloc):
+                raise TransportError("connect", 0, "the server named an endpoint on another origin (%s); refused"
+                                     % where[:100])
+            st.endpoint = parts
+            self._sse = st
+            try:
+                res = self._sse_request("initialize", {"protocolVersion": SSE_VERSION, "capabilities": {},
+                                                        "clientInfo": self.client_info}, deadline)
+            except _SseGone as exc:
+                raise TransportError("http", 200, "the stream closed during initialize: %s" % exc) from None
+            if res.get("protocolVersion") != SSE_VERSION:
+                raise TransportError("unsupported_version", 200, "server answered initialize with %s; spoken: %s"
+                                     % (res.get("protocolVersion"), SSE_VERSION))
+            self.era, self.protocol_version = "sse", SSE_VERSION
+            self.session_id = None
+            self.server_info = res.get("serverInfo")
+            self.notify("notifications/initialized", None, _deadline=deadline)
+            return res
+        except BaseException:
+            st.shut()
+            if self._sse is st:
+                self._sse = None
+            raise
+
+    def _sse_post(self, body, deadline):
+        """POST one message to the endpoint. A 404 means the session is gone (_SseGone)."""
+        st = self._sse
+        if st is None or st.closed:
+            raise _SseGone("no open stream")
+        hdrs = self._headers(body.get("method", ""), None, "", "sse", SSE_VERSION)
+        reply = self._send("POST", json.dumps(body).encode("utf-8"), hdrs, None, deadline, parts=st.endpoint)
+        if reply.status == 404:
+            raise _SseGone("the endpoint answered 404")
+        if not 200 <= reply.status < 300:
+            self._raise_http(reply)
+
+    def _sse_request(self, method, params, deadline):
+        """POST a request and wait for its reply on the stream. Returns the result dict."""
+        st = self._sse
+        if st is None:
+            raise _SseGone("no open stream")
+        rid = next(self._ids)
+        try:
+            self._sse_post({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}, deadline)
+            msg = self._sse_wait(st, deadline, lambda: st.replies.get(rid))
+        finally:
+            st.replies.pop(rid, None)
+        return self._result(_Reply(200, {}, msg, json.dumps(msg).encode("utf-8")))
+
+    def _sse_call(self, method, params, deadline):
+        """A request over HTTP+SSE. A closed stream or a 404 reconnects once and re-issues it with a new id."""
+        try:
+            return self._sse_request(method, params or {}, deadline)
+        except _SseGone:
+            pass
+        self._sse_start(deadline)             # a new GET, a new endpoint, a new initialize
+        try:
+            return self._sse_request(method, params or {}, deadline)
+        except _SseGone as exc:
+            raise TransportError("session_expired", 404, "the HTTP+SSE stream was lost twice: %s" % exc) from None
+
+    def _sse_close(self):
+        st, self._sse = self._sse, None
+        if st is not None:
+            st.shut()

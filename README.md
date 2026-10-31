@@ -465,7 +465,7 @@ A `"url"` entry is a remote MCP server over Streamable HTTP, routed like any std
 ```
 
 - `headers` values take `${VAR}` exactly as `env` does (from the environment or `.env`). `type` may be `"http"` or
-  `"streamable-http"`, or left out.
+  `"streamable-http"`, or left out; `"sse"` forces the older HTTP+SSE transport (below).
 - `https://` always verifies the certificate. `http://` is allowed to `127.0.0.1`, `localhost` and `::1` only; any other
   host fails with `plaintext http to a non-loopback host; set allowInsecure true for this server`. Add
   `"allowInsecure": true` to that server's entry to accept it.
@@ -479,13 +479,23 @@ A `"url"` entry is a remote MCP server over Streamable HTTP, routed like any std
 [remote] stub: legacy 2025-06-18 2 tools
 ```
 
+- **HTTP+SSE (2024-11-05) is spoken too.** Old servers still exist, and the transport is **Deprecated** upstream
+  (it is still allowed for a twelve-month window), so the router speaks it rather than leave them out. Set
+  `"type": "sse"` and the router opens one `GET` stream, takes the `endpoint` event as the URL to `POST` to
+  (a path is resolved against the server's origin; an endpoint on another origin is refused), and reads every reply
+  from the stream. Without a `type`, the router falls back to it, once and in this order, when `server/discover` and
+  then `initialize` are both refused with 400, 404 or 405 and a `GET` answers with an `endpoint` event. `headers`
+  go on the `GET` and on every `POST`. If the stream closes, or the endpoint answers 404, the router reconnects once
+  (a new `GET`, a new `initialize`) and re-sends the request with a new id; a second failure is reported as for any
+  other server. Closing sends no `DELETE`. `--selftest` prints `[remote] <name>: sse 2024-11-05 <n> tools`.
+
 Failures take the path a stdio server does: one reconnect after a short wait (a legacy server's session is
 re-initialized), then `DOWN` on a second failure within a minute. A `401` shows the server as `AUTH_REQUIRED` with its
 `WWW-Authenticate` header, which carries the `resource_metadata` URL.
 
 **Not done:** OAuth (wrap the server in `mcp-remote` as in the `args` example under "Variable expansion"; it
-does the sign-in and the router sees a plain stdio command); resuming a dropped stream and the standalone `GET` stream; `subscriptions/listen`; server requests for
-input (elicitation); and the older HTTP+SSE transport (`"type": "sse"` is `UNSUPPORTED` until 0.9.1).
+does the sign-in and the router sees a plain stdio command); resuming a dropped stream (`Last-Event-ID`) and the standalone `GET` stream of Streamable HTTP;
+`subscriptions/listen`; and server requests for input (elicitation).
 
 ## Run
 
@@ -832,7 +842,7 @@ the default behaviour, unchanged. The hook only sees the tools its `matcher` sen
 | Python (router, bridge, setup) | 3.11 on Windows 11 and Linux; CI: 3.11 on Ubuntu, Windows, macOS and 3.9, 3.10, 3.12, 3.13 on Ubuntu | 3.9 – 3.13 | standard library only; every supported version is now run by CI |
 | Operating system | Windows 11 (daily use); Ubuntu, Windows, macOS (CI: pytest and the node tests) | | the client runs in [Works with](#works-with) were on Linux only |
 | Docker image | CI builds the [Dockerfile](Dockerfile) and speaks MCP to it over stdio on every push | | `python:3.12-slim`; the servers it fronts run in the container too, so a backend needing `npx` or `uvx` needs an image that has them |
-| MCP servers behind the router | stdio; Streamable HTTP against this repo's stub server (modern and three legacy revisions) | stdio, Streamable HTTP (`"url"`) | no OAuth; HTTP+SSE is `UNSUPPORTED` until 0.9.1; see [Remote servers](#remote-servers) |
+| MCP servers behind the router | stdio; Streamable HTTP and HTTP+SSE against this repo's stub server (modern, three legacy revisions, 2024-11-05) | stdio, Streamable HTTP and HTTP+SSE (`"url"`) | no OAuth; HTTP+SSE (Deprecated upstream) is spoken; see [Remote servers](#remote-servers) |
 | Clients (MCP server path) | Claude Code 2.1.296, OpenCode 1.18.35, Cline CLI 3.0.70, Continue `cn` 1.5.47 (one scripted-model turn each, Linux); OpenClaude | Claude Desktop, Cursor, the Cline and Continue IDE extensions, any stdio MCP client | see [Works with](#works-with); the Claude Code hook ran in a live session |
 | Models | `qwen3:30b-a3b-instruct-2507` under DSH drove the router (3 sessions) | any model that calls tools | gpt-oss:20b and qwen3-30b-a3b bypassed it under OpenClaude — see [Model requirement](#model-requirement-read-this-before-you-switch) |
 | Model backend | Ollama (via DSH / OpenClaude) | any | the router never talks to the model backend; only the model's tool-calling behaviour matters |
