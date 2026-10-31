@@ -285,6 +285,41 @@ The router exposes these tools. The first four are always there; `list_groups_wi
 
 All but `call_tool` only report (read-only, no network: the catalogue is in memory, the archive and skills on local disk); `call_tool` does whatever the backend tool does. Each tool's description says what it is for, when a sibling is the better call, what it touches and what comes back — in about one clause each, because the whole `tools/list` payload is capped at 1,100 tokens by a test. Every parameter is typed and explained exactly once, by its own description, by its `enum`, or by the tool description naming it; `tests/test_tool_definitions.py` checks that, and checks this table's argument names against the schemas the server really lists.
 
+## Search by meaning (optional)
+
+`search_capabilities` matches words. Ask it to "persist a memo" and it finds nothing, because no tool says "persist" or "memo"; the tool is `add_note`. Search by meaning fixes that with an embedding model you run yourself. **It is off by default**: with `TOOL_GUARDIAN_EMBED_URL` unset the output is byte for byte what it was and nothing is sent anywhere.
+
+Turn it on by pointing it at an embeddings endpoint. The URL path tells tool-guardian which shape to speak:
+
+```bash
+# Ollama (the path ends in /api/embed)
+export TOOL_GUARDIAN_EMBED_URL=http://127.0.0.1:11434/api/embed
+# or any OpenAI-compatible server (the path ends in /embeddings)
+export TOOL_GUARDIAN_EMBED_URL=http://127.0.0.1:8080/v1/embeddings
+```
+
+| variable | default | meaning |
+|---|---|---|
+| `TOOL_GUARDIAN_EMBED_URL` | unset (off) | the embeddings endpoint; a path that ends in neither `/api/embed` nor `/embeddings` is refused and search stays on keywords |
+| `TOOL_GUARDIAN_EMBED_MODEL` | `nomic-embed-text` | the model name sent in the request |
+| `TOOL_GUARDIAN_EMBED_MIN` | `0.5` | the cosine similarity a tool needs to be listed at all |
+| `TOOL_GUARDIAN_EMBED_CACHE` | `~/.tool-guardian/embed_cache` | where the tool vectors are kept, one `<hash>.json` per model and catalogue |
+
+What changes: a tool is listed only when its meaning is close enough to the query (cosine at or above the minimum), so an unrelated query can answer "no tools match". The listed tools are ranked by cosine, with the old keyword score counted at 1/100 only to break ties. The header, the `args:` lines and the NEXT STEP line are unchanged. If the endpoint is down, times out or answers badly, `search_capabilities` returns the keyword answer, byte for byte, and tool-guardian logs one `search by meaning off` line to stderr per run, not one per search.
+
+Measured with `python bench/bench_search.py` (seven bench catalogues, 95 tools; 40 queries: 20 paraphrases, 10 exact names, 10 that nothing should match; minimum 0.5; 2026-10-31). A query counts when an expected tool is in the first three lines, or, for the ten negative ones, when nothing is listed:
+
+```
+nomic-embed-text   recall@3 keyword=35.0 semantic=80.0 blended=80.0 over 40 queries
+mxbai-embed-large  recall@3 keyword=35.0 semantic=85.0 blended=82.5 over 40 queries
+```
+
+Run it on your own model: `python bench/bench_search.py --url http://127.0.0.1:11434/api/embed --model <name> --min 0.5`.
+
+Why meaning first: a blend that let keywords outweigh meaning scored only 45 to 47.5 on real embeddings, because a substring hit ("store" inside "storemanager") lists tools for unrelated queries and ranks them above the paraphrase match. So a keyword hit alone lists nothing, and keywords only order tools that already passed on meaning.
+
+Cost: one embedding call per search (the query), plus one call for the whole catalogue whenever a tool is added, removed or re-described. Nothing else is sent, and the tool descriptions go only to the endpoint you chose.
+
 ## Architecture
 
 ```mermaid

@@ -26,6 +26,7 @@
     "tg_state.py",
     "tg_update.py",
     "tg_rank.py",
+    "tg_embed.py",
     "tg_ceiling.py",
     "tg_prove.py",
     "tg_usage.py",
