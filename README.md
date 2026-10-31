@@ -356,8 +356,9 @@ not set in your environment or `.env`, and ends with the doctor result for that 
 Every server you add is automatically behind the router's 6 tools: with no groups config it gets its own group named
 after the server; with a custom groups config it lands in `other` until you add it to a group.
 
-`import` writes `~/.tool-guardian/mcp.json` (backing up any existing file), skips what it can't route yet
-(HTTP/SSE servers) and prints the one entry to put in your client instead. Inside DSH (npm install) run the
+`import` writes `~/.tool-guardian/mcp.json` (backing up any existing file) and skips `"url"` servers (it does not
+copy them yet; add one to `~/.tool-guardian/mcp.json` by hand, see [Remote servers](#remote-servers)). For each
+skipped server it prints the one entry to put in your client instead. Inside DSH (npm install) run the
 same thing as `python <plugin folder>/tg_setup.py doctor`.
 
 Or write the config by hand:
@@ -451,6 +452,40 @@ launches it.
 
   (Up to 0.7.0 only `args` were expanded, so an `env` value like that reached
   the server as the literal text `${GITHUB_TOKEN}`.)
+
+## Remote servers
+
+A `"url"` entry is a remote MCP server over Streamable HTTP, routed like any stdio server:
+
+```json
+{"mcpServers": {
+  "docs": {"url": "https://mcp.example.org/mcp", "headers": {"Authorization": "Bearer ${MY_TOKEN}"}},
+  "local": {"url": "http://127.0.0.1:8080/mcp"}
+}}
+```
+
+- `headers` values take `${VAR}` exactly as `env` does (from the environment or `.env`). `type` may be `"http"` or
+  `"streamable-http"`, or left out.
+- `https://` always verifies the certificate. `http://` is allowed to `127.0.0.1`, `localhost` and `::1` only; any other
+  host fails with `plaintext http to a non-loopback host; set allowInsecure true for this server`. Add
+  `"allowInsecure": true` to that server's entry to accept it.
+- `HTTPS_PROXY` / `HTTP_PROXY` are honoured (HTTPS goes through a `CONNECT` tunnel) and so is `NO_PROXY`.
+- The router asks each server which revision it speaks, once, when it starts: the stateless **2026-07-28** revision
+  (`server/discover`), else the stateful **2025-11-25**, **2025-06-18** or **2025-03-26** (`initialize`, with a session
+  id if the server issues one, ended with `DELETE` when the router stops). `tool-guardian --selftest` prints one line
+  per remote server that is up:
+
+```
+[remote] stub: legacy 2025-06-18 2 tools
+```
+
+Failures take the path a stdio server does: one reconnect after a short wait (a legacy server's session is
+re-initialized), then `DOWN` on a second failure within a minute. A `401` shows the server as `AUTH_REQUIRED` with its
+`WWW-Authenticate` header, which carries the `resource_metadata` URL.
+
+**Not done:** OAuth (wrap the server in `mcp-remote` as in the `args` example under "Variable expansion"; it
+does the sign-in and the router sees a plain stdio command); resuming a dropped stream and the standalone `GET` stream; `subscriptions/listen`; server requests for
+input (elicitation); and the older HTTP+SSE transport (`"type": "sse"` is `UNSUPPORTED` until 0.9.1).
 
 ## Run
 
@@ -721,7 +756,7 @@ the default behaviour, unchanged. The hook only sees the tools its `matcher` sen
 | Python (router, bridge, setup) | 3.11 on Windows 11 and Linux; CI: 3.11 on Ubuntu, Windows, macOS and 3.9, 3.10, 3.12, 3.13 on Ubuntu | 3.9 – 3.13 | standard library only; every supported version is now run by CI |
 | Operating system | Windows 11 (daily use); Ubuntu, Windows, macOS (CI: pytest and the node tests) | | the client runs in [Works with](#works-with) were on Linux only |
 | Docker image | CI builds the [Dockerfile](Dockerfile) and speaks MCP to it over stdio on every push | | `python:3.12-slim`; the servers it fronts run in the container too, so a backend needing `npx` or `uvx` needs an image that has them |
-| MCP servers behind the router | stdio | stdio | HTTP/SSE (`"url"`) servers are reported `UNSUPPORTED` |
+| MCP servers behind the router | stdio; Streamable HTTP against this repo's stub server (modern and three legacy revisions) | stdio, Streamable HTTP (`"url"`) | no OAuth; HTTP+SSE is `UNSUPPORTED` until 0.9.1; see [Remote servers](#remote-servers) |
 | Clients (MCP server path) | Claude Code 2.1.296, OpenCode 1.18.35, Cline CLI 3.0.70, Continue `cn` 1.5.47 (one scripted-model turn each, Linux); OpenClaude | Claude Desktop, Cursor, the Cline and Continue IDE extensions, any stdio MCP client | see [Works with](#works-with); the Claude Code hook ran in a live session |
 | Models | `qwen3:30b-a3b-instruct-2507` under DSH drove the router (3 sessions) | any model that calls tools | gpt-oss:20b and qwen3-30b-a3b bypassed it under OpenClaude — see [Model requirement](#model-requirement-read-this-before-you-switch) |
 | Model backend | Ollama (via DSH / OpenClaude) | any | the router never talks to the model backend; only the model's tool-calling behaviour matters |
@@ -754,7 +789,6 @@ Four small MIT-licensed tools for people running local models. Each does one job
 
 ## What it does *not* do (yet)
 
-- **stdio servers only.** An HTTP/SSE server (a `"url"` entry) is reported `UNSUPPORTED` — load it directly rather than through here.
 - It does not merge or rename tools; it proxies them faithfully. `call_tool(server, tool, args)` reaches the real tool unchanged.
 - Over plain MCP it cannot see a client's shell calls; see [bypass detection and its limits](#bypass-detection-over-plain-mcp-and-its-limits).
 - **The router's own tools cost about 1,100 tokens** of `tools/list` (with no backends; more with a long server list). With one small server behind it, that is close to break-even; it pays off from a few servers up. `TOOL_GUARDIAN_TERSE=1` (or `TOOL_GUARDIAN_PRESET=small`) brings it to ~620 tokens.
