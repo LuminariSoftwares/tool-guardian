@@ -4,13 +4,13 @@
   "title": "Tool Guardian",
   "description": "MCP router that keeps tool definitions out of the context window and finds tools on demand.",
   "repository": {"url": "https://github.com/LuminariSoftwares/tool-guardian", "source": "github"},
-  "version": "0.9.0",
+  "version": "0.9.1",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "tool-guardian",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "runtimeHint": "uvx",
       "transport": {"type": "stdio"}
     }
