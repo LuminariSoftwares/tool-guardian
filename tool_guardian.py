@@ -65,7 +65,8 @@ CONFIG
 
     A "url" entry is a remote server over Streamable HTTP (tg_http.py): 2026-07-28 or
     2025-11-25 / 2025-06-18 / 2025-03-26, detected on first contact. "headers" take ${VAR}.
-    HTTP+SSE ("type": "sse") is reported UNSUPPORTED until 0.9.1.
+    The older HTTP+SSE transport (2024-11-05, Deprecated upstream) is spoken too: "type": "sse"
+    uses it directly, and an entry with no type falls back to it when the server refuses both POSTs.
 
 MIT licensed.
 """
@@ -947,16 +948,13 @@ class Backend:
             self._failed("respawn failed: %s" % self.error)
 
     def _remote_start(self, url: str) -> None:
-        """A "url" backend: Streamable HTTP through tg_http. Never raises."""
+        """A "url" backend: Streamable HTTP, or HTTP+SSE, through tg_http. Never raises."""
         scheme = url.split(":", 1)[0].lower()
         kind = str(self.spec.get("type") or "http").lower()
         if scheme not in ("http", "https"):
             self.status, self.error = "UNSUPPORTED", "unsupported URL scheme %r (http and https only)" % scheme
             return
-        if kind == "sse":
-            self.status, self.error = "UNSUPPORTED", "SSE lands in 0.9.1"
-            return
-        if kind not in ("http", "streamable-http"):
+        if kind not in ("http", "streamable-http", "sse"):
             self.status, self.error = "UNSUPPORTED", "unsupported type %r" % kind
             return
         if tg_http is None:
@@ -965,7 +963,7 @@ class Backend:
         headers = _expand_values(self.spec.get("headers") or {})
         deadline = time.monotonic() + START_TIMEOUT
         transport = tg_http.HttpTransport(
-            url, headers, kind="auto", allow_insecure=bool(self.spec.get("allowInsecure")),
+            url, headers, kind="sse" if kind == "sse" else "auto", allow_insecure=bool(self.spec.get("allowInsecure")),
             start_timeout=START_TIMEOUT, call_timeout=CALL_TIMEOUT,
             client_info={"name": "tool-guardian", "version": __version__})
         self.transport = transport

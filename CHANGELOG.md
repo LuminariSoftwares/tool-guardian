@@ -50,8 +50,15 @@ Remote MCP servers: a `"url"` entry is routed over Streamable HTTP instead of be
   modern error is treated as legacy. `headers` take `${VAR}`; plain `http://` is limited to loopback unless
   `"allowInsecure": true`; `HTTPS_PROXY` and `NO_PROXY` are honoured. A `401` shows the server as `AUTH_REQUIRED`
   with its `WWW-Authenticate` header. `--selftest` prints `[remote] <name>: <era> <version> <n> tools`.
-- Not done: OAuth, stream resumption and the `GET` stream, `subscriptions/listen`, elicitation, and HTTP+SSE
-  (`"type": "sse"` stays `UNSUPPORTED`, "SSE lands in 0.9.1"). `import` still skips `url` servers.
+- **HTTP+SSE backends (2024-11-05, Deprecated upstream).** `"type": "sse"` is spoken instead of reported
+  `UNSUPPORTED`: one `GET` stream, its `endpoint` event names the URL to `POST` to, and every reply comes back on the
+  stream by id. Without a `type`, a server that refuses both `server/discover` and `initialize` with 400, 404 or 405 is
+  tried with the `GET` last. `headers` go on every request; a closed stream or a 404 from the endpoint reconnects once
+  (a new `initialize`, the request re-sent with a new id), then raises; closing sends no `DELETE`; an endpoint on
+  another origin is refused. `--selftest` prints `[remote] <name>: sse 2024-11-05 <n> tools`.
+  `tests/test_p110_a1b.py` is the acceptance file.
+- Not done: OAuth, stream resumption (`Last-Event-ID`) and the standalone `GET` stream of Streamable HTTP,
+  `subscriptions/listen`, elicitation. `import` still skips `url` servers.
   `tests/test_p110_a1.py` is the acceptance file and `tests/http_stub_server.py` the stub it runs against.
 
 ## dsh-tool-guardian 0.8.3-beta.1 / PyPI tool-guardian 0.8.3 (2026-10-30)
