@@ -341,6 +341,16 @@ def make_handler(st):
     return H
 
 
+class LoopbackHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer without the reverse-DNS lookup in server_bind: HTTPServer.server_bind calls
+    socket.getfqdn(host) on every start, which took ~25 s per start on macOS CI runners (P110 S1: the macOS
+    pytest job went from 71 s to 1,024 s). The stub only ever binds 127.0.0.1, so the name is known."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
+
 class Proxy(socketserver.ThreadingTCPServer):
     """CONNECT-only stub proxy: records the tunnel request line, then refuses it with 502."""
     daemon_threads = True
@@ -390,7 +400,7 @@ def build_parser():
 def main(argv=None):
     opts = build_parser().parse_args(argv)
     st = State(opts)
-    srv = ThreadingHTTPServer(("127.0.0.1", opts.port), make_handler(st))
+    srv = LoopbackHTTPServer(("127.0.0.1", opts.port), make_handler(st))
     srv.daemon_threads = True
     st.port = srv.server_address[1]
     pport = 0

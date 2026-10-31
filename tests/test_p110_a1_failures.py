@@ -6,6 +6,7 @@ reconnect after the backoff, DOWN on a second failure inside RESPAWN_WINDOW. An 
 call fails, the backend stays ok and nothing is rescheduled -- exactly as a stdio server answering an error.
 """
 import json
+import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -51,9 +52,17 @@ def server(call_reply):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    srv = _NoLookup(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
+
+
+class _NoLookup(ThreadingHTTPServer):
+    """No reverse-DNS lookup on bind (slow on macOS runners); see tests/http_stub_server.py."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
 
 
 @pytest.fixture
