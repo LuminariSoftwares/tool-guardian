@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.9.1-beta.1 / PyPI tool-guardian 0.9.1 (2026-10-31)
+
+Search tools by meaning, optional and off by default: with an embeddings endpoint set, `search_capabilities` finds a tool by what it does rather than only by the words in its name (recall@3 over 40 queries: 80.0 and 82.5 against 35.0 by keywords). Nothing breaking: with the endpoint unset, search answers byte for byte as in 0.9.0.
 
 - **Search by meaning (optional, off by default).** Set `TOOL_GUARDIAN_EMBED_URL` to an Ollama (`.../api/embed`) or OpenAI-compatible (`.../embeddings`) endpoint and `search_capabilities` finds tools by what they do, not only by the words in their name: a tool is listed when its cosine to the query is at least `TOOL_GUARDIAN_EMBED_MIN` (default 0.5), ranked by cosine plus 0.01 x the keyword score. A keyword hit alone lists nothing. Tool vectors are cached under `~/.tool-guardian/embed_cache` (`TOOL_GUARDIAN_EMBED_CACHE`), so a search costs one embedding call plus one per catalogue change. If the endpoint fails, search answers by keywords exactly as before and logs one `search by meaning off` line per run. New sibling module `tg_embed.py` (standard library only); with the URL unset the output is byte for byte what it was (`tests/test_rank_identity.py` unchanged). Measured by `bench/bench_search.py` over 95 tools and 40 queries, minimum 0.5, recall@3: `nomic-embed-text` keyword=35.0 semantic=80.0 blended=80.0; `mxbai-embed-large` keyword=35.0 semantic=85.0 blended=82.5. The blend that let keywords outweigh meaning (keyword + 4 x cosine) measured only 45 to 47.5 and was dropped.
 - README "Ask a human": the dialog is now tested with Claude Code 2.1.302 on Windows -- what the box looks like, how to answer it, and that the model never sees a token.

@@ -114,7 +114,7 @@ tg_prove = _optional("tg_prove")      # --prove: three bundled prompts against a
 tg_http = _optional("tg_http")        # remote ("url") backends over Streamable HTTP
 tg_policy = _optional("tg_policy")    # per-tool deny / ask / readOnly policy and the confirm-token gate
 
-__version__ = "0.9.0"  # keep equal to pyproject.toml version
+__version__ = "0.9.1"  # keep equal to pyproject.toml version
 
 PROTOCOL = "2024-11-05"   # what the BACKENDS are spoken to in; the client-facing versions are CLIENT_VERSIONS
 CLIENT_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")   # newest first: the fallback answer
