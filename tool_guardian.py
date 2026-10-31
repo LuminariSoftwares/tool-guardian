@@ -988,7 +988,8 @@ class Backend:
         except tg_http.TransportError as exc:
             if exc.kind == "timeout":
                 raise TimeoutError("no reply within %gs" % CALL_TIMEOUT) from None
-            if exc.kind in ("tls", "connect", "proxy", "session_expired", "sse_parse"):
+            if exc.kind in ("tls", "connect", "proxy", "session_expired", "sse_parse") or (
+                    exc.kind == "http" and exc.status >= 500):
                 raise BackendExited("server %r unreachable: %s" % (self.name, exc)) from None
             if exc.kind == "auth":
                 self.status, self.error = "AUTH_REQUIRED", exc.detail

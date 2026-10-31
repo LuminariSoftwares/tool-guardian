@@ -19,7 +19,7 @@ Run it as a single stdio MCP server; your real servers sit behind it and the mod
 - Config is the standard `mcpServers` block: `{"mcpServers": {"files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data"]}}}`
 - Search order: `--config PATH`, then `$TOOL_GUARDIAN_CONFIG`, then `~/.tool-guardian/mcp.json`.
 - A config in the current directory (`./mcp.json`, `./.mcp.json`) is NOT loaded without the user's consent, because a cloned repo can carry one. Do not enable it for the user; ask first. To opt in: `--config ./mcp.json`, `TOOL_GUARDIAN_CONFIG=./mcp.json`, or `TOOL_GUARDIAN_PROJECT_CONFIG=1`.
-- Only stdio servers are routed; HTTP/SSE entries are reported `UNSUPPORTED`.
+- stdio and remote Streamable HTTP servers (`"url"`, 2026-07-28 or 2025-11-25/06-18/03-26) are routed; `"type": "sse"` is `UNSUPPORTED` until 0.9.1; no OAuth (see Remote servers).
 - Details: [Configure](README.md#configure), [Run](README.md#run), [Troubleshooting](README.md#troubleshooting)
 
 ## Tools
