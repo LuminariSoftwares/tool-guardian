@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.9.0-beta.1 / PyPI tool-guardian 0.9.0 (2026-10-31)
+
+Remote MCP servers (Streamable HTTP, modern and legacy, plus the deprecated HTTP+SSE), a per-tool safety policy, and a human yes/no dialog for `ask` rules on clients that offer it. Nothing breaking: a 2024-11-05 client sees the router byte for byte as before.
 
 Ask a human: an `ask` rule shows the user a yes/no dialog on clients that can, instead of a token the model hands back.
 
