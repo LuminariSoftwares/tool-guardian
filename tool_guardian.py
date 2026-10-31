@@ -60,8 +60,9 @@ CONFIG
     cloned repository can carry one and its servers would run unapproved; when one
     is found and skipped, the reason and the opt-in go to stderr.
 
-    stdio servers only for now. An HTTP/SSE server (a "url" entry) is reported
-    UNSUPPORTED -- load it directly rather than through here.
+    A "url" entry is a remote server over Streamable HTTP (tg_http.py): 2026-07-28 or
+    2025-11-25 / 2025-06-18 / 2025-03-26, detected on first contact. "headers" take ${VAR}.
+    HTTP+SSE ("type": "sse") is reported UNSUPPORTED until 0.9.1.
 
 MIT licensed.
 """
@@ -104,6 +105,7 @@ tg_update = _optional("tg_update")    # the one "update available" line
 tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
 tg_prove = _optional("tg_prove")      # --prove: three bundled prompts against a model endpoint
+tg_http = _optional("tg_http")        # remote ("url") backends over Streamable HTTP
 
 __version__ = "0.8.3"  # keep equal to pyproject.toml version
 
@@ -760,6 +762,15 @@ def _backoff_sleep(seconds: float) -> None:
     time.sleep(seconds)
 
 
+def _expand_values(mapping: dict) -> dict:
+    """A config mapping (env, headers) with ${VAR} expanded in its values, as for args."""
+    values = {k: str(v) for k, v in mapping.items()}
+    if tg_env is not None:
+        keys = sorted(values)
+        values = dict(zip(keys, tg_env.expand_args([values[k] for k in keys])))
+    return values
+
+
 class BackendExited(RuntimeError):
     """The backend closed stdout: its process is gone."""
 
@@ -771,6 +782,7 @@ class Backend:
         self.name = name
         self.spec = spec or {}
         self.proc = None
+        self.transport = None   # tg_http.HttpTransport for a "url" backend
         self.tools = []
         self.status = "not started"
         self.error = ""
@@ -851,7 +863,10 @@ class Backend:
                 return msg.get("result", {})
 
     def stop(self) -> None:
-        """Kill the process. Best effort, never raises."""
+        """Kill the process (or end the remote session). Best effort, never raises."""
+        transport, self.transport = self.transport, None
+        if transport is not None:
+            transport.close()
         proc = self.proc
         if proc is not None and proc.poll() is None:
             try:
@@ -922,25 +937,81 @@ class Backend:
         if self.status != "ok":
             self._failed("respawn failed: %s" % self.error)
 
+    def _remote_start(self, url: str) -> None:
+        """A "url" backend: Streamable HTTP through tg_http. Never raises."""
+        scheme = url.split(":", 1)[0].lower()
+        kind = str(self.spec.get("type") or "http").lower()
+        if scheme not in ("http", "https"):
+            self.status, self.error = "UNSUPPORTED", "unsupported URL scheme %r (http and https only)" % scheme
+            return
+        if kind == "sse":
+            self.status, self.error = "UNSUPPORTED", "SSE lands in 0.9.1"
+            return
+        if kind not in ("http", "streamable-http"):
+            self.status, self.error = "UNSUPPORTED", "unsupported type %r" % kind
+            return
+        if tg_http is None:
+            self.status, self.error = "UNSUPPORTED", "tg_http.py is not beside tool_guardian.py"
+            return
+        headers = _expand_values(self.spec.get("headers") or {})
+        deadline = time.monotonic() + START_TIMEOUT
+        transport = tg_http.HttpTransport(
+            url, headers, kind="auto", allow_insecure=bool(self.spec.get("allowInsecure")),
+            start_timeout=START_TIMEOUT, call_timeout=CALL_TIMEOUT,
+            client_info={"name": "tool-guardian", "version": __version__})
+        self.transport = transport
+        try:
+            transport.start()
+            res = transport.request("tools/list", {}, timeout=max(deadline - time.monotonic(), 0.001))
+            if self._abandoned:
+                return
+            self.tools = res.get("tools") or []
+            self.status = "ok"
+            log("backend %s: %d tools (%s %s)" % (self.name, len(self.tools), transport.era,
+                                                   transport.protocol_version))
+        except Exception as exc:  # noqa: BLE001
+            if self._abandoned:
+                return
+            if isinstance(exc, tg_http.TransportError) and exc.kind == "auth":
+                self.status, self.error = "AUTH_REQUIRED", exc.detail
+            else:
+                self.status, self.error = "UNKNOWN", "%s: %s" % (type(exc).__name__, exc)
+            self.stop()
+            log("backend %s: %s -- %s" % (self.name, self.status, self.error))
+
+    def _remote_call(self, tool: str, args: dict, timeout: float):
+        """tools/call over the transport. A transport failure is a failed backend (the caller schedules the
+        reconnect); a server-side error is just an error, as for stdio."""
+        try:
+            return self.transport.request("tools/call", {"name": tool, "arguments": args or {}},
+                                          timeout=timeout, name=tool)
+        except tg_http.TransportError as exc:
+            if exc.kind == "timeout":
+                raise TimeoutError("no reply within %gs" % CALL_TIMEOUT) from None
+            if exc.kind in ("tls", "connect", "proxy", "session_expired", "sse_parse") or (
+                    exc.kind == "http" and exc.status >= 500):
+                raise BackendExited("server %r unreachable: %s" % (self.name, exc)) from None
+            if exc.kind == "auth":
+                self.status, self.error = "AUTH_REQUIRED", exc.detail
+            raise RuntimeError(str(exc)[:300]) from None
+        except tg_http.InputRequired as exc:
+            raise RuntimeError("server %r asked for user input (%s); this router cannot answer it yet"
+                               % (self.name, ", ".join(sorted(exc.result.get("inputRequests") or {})))) from None
+
     def start(self) -> None:
         if self.spec.get("url"):
-            self.status = "UNSUPPORTED"
-            self.error = ("HTTP/SSE backend -- this router speaks stdio only so "
-                          "far. Load it directly rather than through here.")
-            return
+            return self._remote_start(str(self.spec["url"]))
         command = self.spec.get("command")
         if not command:
             self.status, self.error = "UNKNOWN", "no `command` in config"
             return
-        values = {k: str(v) for k, v in (self.spec.get("env") or {}).items()}
         args = self.spec.get("args") or []
+        # `env` values take ${VAR} the same way `args` do: the README's own
+        # `--env GITHUB_TOKEN='${GITHUB_TOKEN}'` passed the literal text up to 0.7.0.
+        # An unset variable stays literal, exactly as for args.
+        values = _expand_values(self.spec.get("env") or {})
         if tg_env is not None:
-            # `env` values take ${VAR} the same way `args` do: the README's own
-            # `--env GITHUB_TOKEN='${GITHUB_TOKEN}'` passed the literal text up to 0.7.0.
-            # An unset variable stays literal, exactly as for args.
             args = tg_env.expand_args(args)
-            keys = sorted(values)
-            values = dict(zip(keys, tg_env.expand_args([values[k] for k in keys])))
         env = dict(os.environ)
         env.update(values)
         cmd = [command, *args]
@@ -1023,6 +1094,8 @@ class Backend:
         try:
             self._revive()
             self._check_callable(tool)
+            if self.transport is not None:
+                return self._remote_call(tool, args, max(deadline - time.monotonic(), 0.001))
             request = {"jsonrpc": "2.0", "id": self._next(), "method": "tools/call",
                        "params": {"name": tool, "arguments": args or {}}}
             try:
@@ -1039,10 +1112,11 @@ class Backend:
         except TimeoutError:
             self._failed("no reply within %gs" % CALL_TIMEOUT)
             raise
-        except BackendExited:
-            self._failed("process exited during a call")
-            raise BackendExited("server %r exited during the call; nothing came back. It is %s."
-                                % (self.name, "DOWN" if self.status == "DOWN"
+        except BackendExited as exc:
+            self._failed("process exited during a call" if self.spec.get("command") else str(exc))
+            raise BackendExited("server %r %s during the call; nothing came back. It is %s."
+                                % (self.name, "exited" if self.spec.get("command") else "became unreachable",
+                                   "DOWN" if self.status == "DOWN"
                                    else "restarted before the next call")) from None
         finally:
             self._lock.release()
@@ -1907,6 +1981,9 @@ def selftest(config: str = "") -> int:
           % (len(ok), sum(len(b.tools) for b in ok)))
     for b in sorted(ok, key=lambda x: x.name):
         print("[%s] %d tools, ~%d tokens" % (b.name, len(b.tools), count(b.tools)))
+        if b.transport is not None:
+            print("[remote] %s: %s %s %d tools" % (b.name, b.transport.era, b.transport.protocol_version,
+                                                   len(b.tools)))
     for b in bad:
         print("  %s: %s -- %s" % (b.name, b.status, b.error[:100]))
     print("\nNOTE: this measures the token SAVING and that backends start. It does"

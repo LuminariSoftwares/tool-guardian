@@ -29,6 +29,7 @@
     "tg_ceiling.py",
     "tg_prove.py",
     "tg_usage.py",
+    "tg_http.py",
     "README.md",
     "llms.txt",
     "CHANGELOG.md",

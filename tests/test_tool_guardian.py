@@ -173,7 +173,7 @@ def test_no_config_does_not_crash(tmp_path, monkeypatch):
 def test_unsupported_url_backend(tmp_path):
     cfg = tmp_path / "mcp.json"
     cfg.write_text(json.dumps({"mcpServers": {
-        "remote": {"url": "https://example.com/mcp"}}}), encoding="utf-8")
+        "remote": {"url": "ftp://example.com/mcp"}}}), encoding="utf-8")
     r = tg.Router(str(cfg))
     r.start()
     assert r.backends["remote"].status == "UNSUPPORTED"

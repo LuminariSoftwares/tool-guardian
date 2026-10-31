@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Remote MCP servers: a `"url"` entry is routed over Streamable HTTP instead of being reported `UNSUPPORTED`.
+
+- **Streamable HTTP backends.** New module `tg_http.py` (standard library only). It tells the stateless 2026-07-28
+  revision (`server/discover`) from the stateful 2025-11-25 / 2025-06-18 / 2025-03-26 ones (`initialize`, session id,
+  `DELETE` on close) when the router starts, and a server that refuses `server/discover` for any reason other than a
+  modern error is treated as legacy. `headers` take `${VAR}`; plain `http://` is limited to loopback unless
+  `"allowInsecure": true`; `HTTPS_PROXY` and `NO_PROXY` are honoured. A `401` shows the server as `AUTH_REQUIRED`
+  with its `WWW-Authenticate` header. `--selftest` prints `[remote] <name>: <era> <version> <n> tools`.
+- Not done: OAuth, stream resumption and the `GET` stream, `subscriptions/listen`, elicitation, and HTTP+SSE
+  (`"type": "sse"` stays `UNSUPPORTED`, "SSE lands in 0.9.1"). `import` still skips `url` servers.
+  `tests/test_p110_a1.py` is the acceptance file and `tests/http_stub_server.py` the stub it runs against.
+
 ## dsh-tool-guardian 0.8.3-beta.1 / PyPI tool-guardian 0.8.3 (2026-10-30)
 
 A counted usage report: `tool-guardian --usage` shows what the router saved, per server, from the call log.
