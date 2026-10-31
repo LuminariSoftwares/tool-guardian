@@ -1,0 +1,270 @@
+{
+ "_what": "P110 S6 search-by-meaning bench: 40 queries over the 95 tools in bench/fixtures/catalogs, written by the overseer BEFORE any measurement (20 synonym = a paraphrase that shares little wording with the tool; 10 exact = keyword-friendly; 10 negative = nothing should match). A positive query counts when any expected server.tool is in the top 3; a negative one when search returns no match.",
+ "queries": [
+  {
+   "query": "relocate a document into another folder",
+   "kind": "synonym",
+   "expect": [
+    "filesystem.move_file"
+   ]
+  },
+  {
+   "query": "open a ticket about a bug",
+   "kind": "synonym",
+   "expect": [
+    "github.create_issue"
+   ]
+  },
+  {
+   "query": "propose my changes for review before they go in",
+   "kind": "synonym",
+   "expect": [
+    "github.create_pull_request"
+   ]
+  },
+  {
+   "query": "grab a picture of what the site shows",
+   "kind": "synonym",
+   "expect": [
+    "playwright.browser_take_screenshot",
+    "playwright.browser_snapshot"
+   ]
+  },
+  {
+   "query": "go to a web address",
+   "kind": "synonym",
+   "expect": [
+    "playwright.browser_navigate"
+   ]
+  },
+  {
+   "query": "make a folder",
+   "kind": "synonym",
+   "expect": [
+    "filesystem.create_directory"
+   ]
+  },
+  {
+   "query": "copy someone else's project into my account",
+   "kind": "synonym",
+   "expect": [
+    "github.fork_repository"
+   ]
+  },
+  {
+   "query": "show the history of changes on a branch",
+   "kind": "synonym",
+   "expect": [
+    "github.list_commits"
+   ]
+  },
+  {
+   "query": "remember facts about a person",
+   "kind": "synonym",
+   "expect": [
+    "memory.create_entities",
+    "memory.add_observations"
+   ]
+  },
+  {
+   "query": "forget a stored fact",
+   "kind": "synonym",
+   "expect": [
+    "memory.delete_observations",
+    "memory.delete_entities"
+   ]
+  },
+  {
+   "query": "connect two concepts in my notes",
+   "kind": "synonym",
+   "expect": [
+    "memory.create_relations"
+   ]
+  },
+  {
+   "query": "check my automation for mistakes",
+   "kind": "synonym",
+   "expect": [
+    "n8n-mcp.validate_workflow"
+   ]
+  },
+  {
+   "query": "find a ready-made automation example",
+   "kind": "synonym",
+   "expect": [
+    "n8n-mcp.search_templates"
+   ]
+  },
+  {
+   "query": "execute a script inside the website",
+   "kind": "synonym",
+   "expect": [
+    "playwright.browser_evaluate",
+    "playwright.browser_run_code_unsafe"
+   ]
+  },
+  {
+   "query": "add two values together",
+   "kind": "synonym",
+   "expect": [
+    "everything.get-sum"
+   ]
+  },
+  {
+   "query": "think through a hard problem carefully",
+   "kind": "synonym",
+   "expect": [
+    "sequential-thinking.sequentialthinking"
+   ]
+  },
+  {
+   "query": "send a local document through the web form's picker",
+   "kind": "synonym",
+   "expect": [
+    "playwright.browser_file_upload"
+   ]
+  },
+  {
+   "query": "leave a remark on a ticket",
+   "kind": "synonym",
+   "expect": [
+    "github.add_issue_comment"
+   ]
+  },
+  {
+   "query": "how big are the things in this folder",
+   "kind": "synonym",
+   "expect": [
+    "filesystem.list_directory_with_sizes"
+   ]
+  },
+  {
+   "query": "what has the web page printed to the developer log",
+   "kind": "synonym",
+   "expect": [
+    "playwright.browser_console_messages"
+   ]
+  },
+  {
+   "query": "read file",
+   "kind": "exact",
+   "expect": [
+    "filesystem.read_file",
+    "filesystem.read_text_file"
+   ]
+  },
+  {
+   "query": "create issue",
+   "kind": "exact",
+   "expect": [
+    "github.create_issue"
+   ]
+  },
+  {
+   "query": "merge pull request",
+   "kind": "exact",
+   "expect": [
+    "github.merge_pull_request"
+   ]
+  },
+  {
+   "query": "browser click",
+   "kind": "exact",
+   "expect": [
+    "playwright.browser_click"
+   ]
+  },
+  {
+   "query": "search code",
+   "kind": "exact",
+   "expect": [
+    "github.search_code"
+   ]
+  },
+  {
+   "query": "list directory",
+   "kind": "exact",
+   "expect": [
+    "filesystem.list_directory"
+   ]
+  },
+  {
+   "query": "validate workflow",
+   "kind": "exact",
+   "expect": [
+    "n8n-mcp.validate_workflow"
+   ]
+  },
+  {
+   "query": "read graph",
+   "kind": "exact",
+   "expect": [
+    "memory.read_graph"
+   ]
+  },
+  {
+   "query": "create branch",
+   "kind": "exact",
+   "expect": [
+    "github.create_branch"
+   ]
+  },
+  {
+   "query": "get sum",
+   "kind": "exact",
+   "expect": [
+    "everything.get-sum"
+   ]
+  },
+  {
+   "query": "book a flight to Denver",
+   "kind": "negative",
+   "expect": []
+  },
+  {
+   "query": "send a text message to my mom",
+   "kind": "negative",
+   "expect": []
+  },
+  {
+   "query": "what is the weather tomorrow",
+   "kind": "negative",
+   "expect": []
+  },
+  {
+   "query": "order a pizza",
+   "kind": "negative",
+   "expect": []
+  },
+  {
+   "query": "translate this sentence into Spanish",
+   "kind": "negative",
+   "expect": []
+  },
+  {
+   "query": "play some music",
+   "kind": "negative",
+   "expect": []
+  },
+  {
+   "query": "check my bank balance",
+   "kind": "negative",
+   "expect": []
+  },
+  {
+   "query": "set an alarm for 6am",
+   "kind": "negative",
+   "expect": []
+  },
+  {
+   "query": "transcribe this audio recording",
+   "kind": "negative",
+   "expect": []
+  },
+  {
+   "query": "convert celsius to fahrenheit",
+   "kind": "negative",
+   "expect": []
+  }
+ ]
+}
