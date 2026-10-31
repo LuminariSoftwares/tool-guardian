@@ -227,7 +227,7 @@ def prove(tg, out=sys.stdout, chat=None) -> int:
             return _post(base + "/chat/completions",
                          {"model": model, "messages": messages, "tools": tools, "temperature": 0}, key)
     tg.CALL_LOG = ""   # a proof run is not a session of yours: keep it out of the call log
-    router = tg.Router("", options={})
+    router = tg.Router("", options={}, policy=False)   # a capability test: the user's policy file must not fail it
     router.remember_catalogue = lambda: None   # the stub must not replace the hook's catalogue
     router.start({"notes": {"command": sys.executable, "args": [os.path.abspath(__file__), "--backend"],
                             "description": "notes: add, find and count notes"}})
@@ -237,6 +237,7 @@ def prove(tg, out=sys.stdout, chat=None) -> int:
             return 1
         tools = openai_tools(tg.build_router_tools(router.backends))
         print("prove: %s model %s, %d prompts" % (base or "(stub)", model, len(PROMPTS)), file=out)
+        print("prove: policy off -- your TOOL_GUARDIAN_POLICY file is not applied to the bundled stub server", file=out)
         failed = 0
         for name, prompt in PROMPTS:
             if router._ceiling is not None:

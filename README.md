@@ -573,7 +573,7 @@ dropping the unused servers would shrink the full catalogue by ~16,553 tokens (6
 TOOL_GUARDIAN_PROVE_URL=http://127.0.0.1:11434/v1 tool-guardian --prove
 ```
 
-Sends three bundled prompts to an OpenAI-compatible chat endpoint with the router tools attached, runs the model's tool calls through a real router in front of a bundled stub server, and prints one `PASS`/`FAIL` line per prompt with the prompt and completion tokens the endpoint reported: `list_describe` (list or search, then `describe_tool`), `nested_call` (`call_tool` with a nested filter), `stalled` (the model must reach `call_tool`, not only search). Exit 0 when all pass, 1 on any `FAIL`, 2 when `TOOL_GUARDIAN_PROVE_URL` is not set. Optional: `TOOL_GUARDIAN_PROVE_MODEL` (default: the first id from `GET <url>/models`), `TOOL_GUARDIAN_PROVE_KEY` (bearer token). The servers in your `mcp.json` are not started, and nothing is written to the call log or `state.json`.
+Sends three bundled prompts to an OpenAI-compatible chat endpoint with the router tools attached, runs the model's tool calls through a real router in front of a bundled stub server, and prints one `PASS`/`FAIL` line per prompt with the prompt and completion tokens the endpoint reported: `list_describe` (list or search, then `describe_tool`), `nested_call` (`call_tool` with a nested filter), `stalled` (the model must reach `call_tool`, not only search). Exit 0 when all pass, 1 on any `FAIL`, 2 when `TOOL_GUARDIAN_PROVE_URL` is not set. Optional: `TOOL_GUARDIAN_PROVE_MODEL` (default: the first id from `GET <url>/models`), `TOOL_GUARDIAN_PROVE_KEY` (bearer token). The servers in your `mcp.json` are not started, and nothing is written to the call log or `state.json`. Your tool policy file is ignored (it prints `prove: policy off`): this is a capability test on the bundled stub server, and a `deny` or `readOnly` rule would fail it for the wrong reason.
 
 Under DSH, type **`/toolguardian`** in a session for the same report from the running plugin: each server's status and tool count, the tokens freed on every request, active groups, ladder and bypass counters, and the update line.
 
@@ -700,6 +700,69 @@ Inside DSH it (1) registers the router tools **natively**, so your MCP backends'
 **Settings.** There is no card for Tool Guardian in the DSH web UI (DSH draws cards only for plugins that ship a browser bundle); the settings live under `tool-guardian:` in `~/.dsh/settings.yaml` and apply live. [docs/dsh-settings.md](docs/dsh-settings.md) shows every field as a card and the exact precedence order, proven line by line from the code.
 
 The result-shaping design follows [dsh-trim](https://www.npmjs.com/package/dsh-trim) (shuistama, MIT): `next()` first, fail open, archive before anything lossy.
+
+## Tool policy: deny, ask, read-only
+
+`call_tool` runs whatever tool the model names. A policy file lets you block tools, make the model confirm others, or make a whole session read-only. It is `$TOOL_GUARDIAN_POLICY`, else `~/.tool-guardian/policy.json`, and it is read when the router starts (restart to change it):
+
+```json
+{"readOnly": false,
+ "servers": {"*":     {"deny": ["^delete_"]},
+             "files": {"allow": ["^read_", "^list_"], "ask": ["write|move"]}}}
+```
+
+- A server's own entry and `"*"` are merged. Each regex is `re.search`ed on the bare tool name (no `server.` prefix).
+- Order: `readOnly`, then `deny`, then an `allow` list that nothing in it matches (that tool is denied, rule `allow`), then `ask`. Otherwise the tool is allowed. No file means no policy: the router behaves exactly as it did before.
+- **A denied tool is invisible.** `list_capabilities`, `search_capabilities` and `list_groups_with_costs` leave it out, and `call_tool` (or `describe_tool`) on it returns `POLICY_DENIED <rule>` without calling the server.
+- **A file that is not valid JSON, or has a bad regex, fails closed:** every `call_tool` returns `POLICY_DENIED policy file unreadable: ...` until you fix it.
+- Every deny and every ask is written to the call log as a `kind: "policy"` row (server, tool name, decision, rule; never the arguments), and `tool-guardian --bypass-summary` adds a line `policy denials: <n>`.
+
+Three examples:
+
+```json
+{"readOnly": true}
+```
+
+A read-only session: only tools whose server marks them `readOnlyHint: true` are visible or callable.
+
+```json
+{"servers": {"*": {"deny": ["^delete_"]}}}
+```
+
+Deny every `delete_...` tool on every server.
+
+```json
+{"servers": {"*": {"ask": ["shell|exec|write|rm"]}}}
+```
+
+Ask before anything whose name contains `shell`, `exec`, `write` or `rm`.
+
+**`readOnly` trusts the server's own hints.** MCP tool annotations (`readOnlyHint` and friends) are written by the server and are untrusted: a server can mark a destructive tool read-only, and the router cannot tell. `readOnly` narrows what a well-behaved server exposes; it is not a sandbox. A server that sends no annotations has no tool marked `readOnlyHint: true`, so **`"readOnly": true` denies everything on it**: use `allow` for those servers.
+
+### What `ask` is: a token the model hands back
+
+`call_tool` on an `ask` tool does not run it. It returns `CONFIRM_REQUIRED <token>` and one sentence on how to go ahead. The model then calls `call_tool` again with the same `server`, `tool` and `args` plus a top-level `confirm`:
+
+```json
+{"server": "files", "tool": "write_file", "args": {"path": "a.txt", "text": "hi"}, "confirm": "<token>"}
+```
+
+`confirm` is deliberately not in the `call_tool` schema (the descriptions, and the 1,100-token `tools/list`, stay as they are); the router accepts it anyway. The token is an HMAC-SHA256 over the server, tool, arguments and a nonce under a secret that lives only in the running process, is valid for 120 seconds (`TOOL_GUARDIAN_CONFIRM_TTL`) and works once, for exactly that call. A token for other arguments, another tool, an expired or a used one runs nothing and you get a fresh `CONFIRM_REQUIRED`.
+
+**The model confirms, not you -- unless your client offers elicitation (next section).** The token goes to the model and the model passes it back, so `ask` stops a model that has not thought about what it is about to do, not one that is trying to get round it. If you need a person in the loop today, use `deny`.
+
+### Human confirmation (elicitation): not built yet
+
+MCP clients that support elicitation can put a yes/no question to the person. Tool Guardian does not use it yet; until it does, every `ask` is answered by the model.
+
+### Check a policy without running anything
+
+```bash
+tool-guardian --policy-check notes add_note '{"title": "x"}'   # prints: allow | deny <rule> | ask <rule>
+tool-guardian --policy-check --list notes                      # one line per tool: <verdict> <tool>[ <rule>]
+```
+
+`--policy-check` starts the servers in your config (use `--config F` for another one) to read their annotations, and exits 0 for `allow`, 3 for `deny`, 4 for `ask`, 2 for a usage error or a server that is not up. `--prove` ignores the policy file on purpose (see [Prove your model drives the router](#prove-your-model-drives-the-router)).
 
 ## Bypass detection over plain MCP (and its limits)
 
