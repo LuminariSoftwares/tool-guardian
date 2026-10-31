@@ -1,4 +1,5 @@
-"""P110 S3 (A5) acceptance -- terse mode for small context windows. Written by the O5 overseer; DO NOT EDIT.
+"""P110 S3 (A5) acceptance (rev 2, 2026-10-30) -- terse mode for small context windows. Written by the O5 overseer;
+DO NOT EDIT.
 
 Why: the README's "What it does not do" says "There is no terse mode for the descriptions yet". With the
 `small` preset the router's own `tools/list` still measured 1,090 tokens on 0.8.1 (2026-10-30, the same
@@ -121,8 +122,8 @@ def test_budget_small_is_written_down():
     m = re.search(r"^BUDGET_SMALL\s*=\s*(\d+)", src, re.M)
     assert m and int(m.group(1)) <= 700, "tests/test_tools_list_budget.py needs BUDGET_SMALL <= 700"
     log = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    top = log.split("\n## ", 2)[1] if "\n## " in log else log
-    assert "BUDGET_SMALL" in top and re.search(r"\b\d{3}\b", top), "CHANGELOG top entry must record BUDGET_SMALL"
+    # rev 2: any CHANGELOG entry, not only the top one -- the top entry moves on with every release (PR #23).
+    assert re.search(r"BUDGET_SMALL\D{0,40}\d{3}", log), "the CHANGELOG must record BUDGET_SMALL with its number"
 
 
 def test_readme_no_longer_says_there_is_no_terse_mode():

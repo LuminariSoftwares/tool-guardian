@@ -509,6 +509,29 @@ Starts your configured servers, prints the catalogue, and reports the tokens the
 
 Token counts use `tiktoken` (cl100k_base) when it is importable and the characters ÷ 3.5 estimate otherwise; the report prints which, e.g. `token counts: estimate (chars / 3.5; tiktoken not available)`. `pip install tiktoken` switches it; nothing else needs it.
 
+### Count what it saved in real use
+
+```bash
+tool-guardian --usage [--since 7d|24h] [--json]
+```
+
+`--selftest` measures once, on a clean start. `--usage` counts afterwards, from the call log (`~/.tool-guardian/calls.jsonl`, on by default): per server, the router calls, errors and result characters in and out; the catalogue tokens avoided; and the servers you configured but never called. Without `--since` it reads the whole log; `--json` prints the same figures as one JSON object. A scripted run of seven servers (the bench's demo catalogues) over four sessions:
+
+```text
+tool-guardian usage (whole call log): 4 session(s), 7 router call(s), 1 error(s)
+  filesystem  calls 4  errors 1  chars in 27,900  out 9,200
+  github      calls 2  errors 0  chars in 50,800  out 4,000
+  memory      calls 1  errors 0  chars in 420  out 420
+result shaping saved 65,500 chars
+catalogue tokens avoided: ~97,112
+unused servers: everything, memory, n8n-mcp, playwright, sequential-thinking
+dropping the unused servers would shrink the full catalogue by ~16,553 tokens (65% of ~25,304)
+```
+
+- **Catalogue tokens avoided** is the number of sessions started in the window × (what every live server's `tools/list` costs − what the router's own costs). Both costs are written to `state.json` each time the router starts, so a log from before 0.8.3 prints `unknown` until the router has started once. The `~` marks a characters ÷ 3.5 estimate; `--usage` always uses it, even when `tiktoken` is installed.
+- **Unused servers** have no `call_tool` in the window; `describe_tool` or a search alone does not count as use.
+- Nothing in the report is an argument value: the log holds only server and tool names, argument key names and character counts. With the log off (`TOOL_GUARDIAN_CALL_LOG=""`) there is nothing to read and it says so; an empty window prints `no calls in window`.
+
 ### Prove your model drives the router
 
 ```bash
@@ -735,7 +758,8 @@ Four small MIT-licensed tools for people running local models. Each does one job
 - It does not merge or rename tools; it proxies them faithfully. `call_tool(server, tool, args)` reaches the real tool unchanged.
 - Over plain MCP it cannot see a client's shell calls; see [bypass detection and its limits](#bypass-detection-over-plain-mcp-and-its-limits).
 - **The router's own tools cost about 1,100 tokens** of `tools/list` (with no backends; more with a long server list). With one small server behind it, that is close to break-even; it pays off from a few servers up. `TOOL_GUARDIAN_TERSE=1` (or `TOOL_GUARDIAN_PRESET=small`) brings it to ~620 tokens.
-- The token figures are an estimate (characters ÷ 3.5) unless `tiktoken` is installed.
+- The token figures are an estimate (characters ÷ 3.5) unless `tiktoken` is installed; `--usage` always uses the estimate.
+- `--usage` counts what the router did, not what the model would have done without it: the "avoided" figure assumes every session would otherwise have loaded the full catalogue, and it cannot tell a model that skipped the router from one that had nothing to call (see `--bypass-summary`).
 - It has no card in the DSH web UI; configure it in `~/.dsh/settings.yaml` ([docs/dsh-settings.md](docs/dsh-settings.md)).
 
 ## How it is tested

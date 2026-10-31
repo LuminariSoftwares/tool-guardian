@@ -17,6 +17,7 @@ list_skills / read_skill (when skills are configured). Decisions: docs/adr/.
     tool-guardian --prove              three bundled prompts against $TOOL_GUARDIAN_PROVE_URL
     tool-guardian --config path.json   use a specific mcpServers config
     tool-guardian --bypass-summary     router use vs shell bypasses, from the call log
+    tool-guardian --usage              what the router saved, counted from the call log
     tool-guardian --hook-pretooluse    Claude Code PreToolUse hook: logs (or denies) shell
                                        calls that do a router tool's job
 
@@ -97,6 +98,7 @@ def _optional(module: str):
 tg_ladder = _optional("tg_ladder")    # deterministic compression of tool results
 tg_spill = _optional("tg_spill")      # archive of the full original behind every lossy result
 tg_groups = _optional("tg_groups")    # tool groups priced in context tokens
+tg_usage = _optional("tg_usage")      # --usage: a counted report from the call log
 tg_state = _optional("tg_state")      # session ids, state.json, call-log summary, Claude Code hook
 tg_update = _optional("tg_update")    # the one "update available" line
 tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
@@ -1103,15 +1105,19 @@ class Router:
 
     def remember_catalogue(self) -> None:
         """Tool names per live server into state.json: the Claude Code hook matches shell
-        commands against them without starting a single backend. Best effort."""
+        commands against them without starting a single backend. Also what each server's full
+        tools/list and the router's own cost, which `--usage` multiplies by the session count.
+        Best effort."""
         if tg_state is None:
             return
         path = tg_state.default_state_path()
         if not path:
             return
         try:
-            tg_state.record_catalogue(path, {n: [t.get("name", "") for t in b.tools]
-                                             for n, b in self.backends.items() if b.status == "ok"})
+            live = {n: b for n, b in self.backends.items() if b.status == "ok"}
+            tg_state.record_catalogue(path, {n: [t.get("name", "") for t in b.tools] for n, b in live.items()},
+                                      tokens={n: est_tokens(b.tools) for n, b in live.items()},
+                                      router_tokens=model_cost(build_all_tools(self.backends)))
         except Exception as exc:  # noqa: BLE001
             log("state.json not updated: %s" % exc)
 
@@ -1944,6 +1950,22 @@ def bypass_summary(session: str = "", since_hours: float = 24.0, log_path: str =
     return "call log: %s\n%s" % (path, tg_state.render_bypass_summary(summary))
 
 
+def usage_report(since: str = "", as_json: bool = False, log_path: str = "") -> str:
+    """What the router saved, counted from the call log and the catalogue costs in state.json."""
+    if tg_usage is None or tg_state is None:
+        return "usage unavailable: tg_usage.py / tg_state.py is not beside tool_guardian.py"
+    path = log_path or CALL_LOG
+    if not path:
+        msg = "the call log is off (TOOL_GUARDIAN_CALL_LOG is empty) -- nothing to summarise"
+        return json.dumps({"error": msg}) if as_json else msg
+    cutoff = tg_usage.since_stamp(since)
+    tokens, router_tokens = tg_usage.catalogue_costs(tg_state.default_state_path())
+    summary = tg_usage.summarize(tg_state.read_calls(path), tokens, router_tokens, since=cutoff)
+    if as_json:
+        return json.dumps(summary)
+    return tg_usage.render(summary, tokens, "since " + since if since else "")
+
+
 def hook_pretooluse(stdin_text: str, mode: str = "", rules: str = "") -> tuple:
     """Claude Code PreToolUse hook. Never fails the user's shell call: any problem is exit 0.
     `rules`: an optional JSON allow/deny file, applied before the default behaviour."""
@@ -1969,6 +1991,13 @@ def main(argv=None) -> int:
                     help="with --bypass-summary: a session id, 'last' or 'all' (default: last 24 hours)")
     ap.add_argument("--since-hours", dest="since_hours", type=float, default=24.0,
                     help="with --bypass-summary: how far back to look (default 24)")
+    ap.add_argument("--usage", action="store_true",
+                    help="what the router saved, counted from the call log, then exit")
+    ap.add_argument("--since", default="",
+                    help="with --usage or --bypass-summary: only the last N days or hours, e.g. 7d or 24h "
+                         "(default: the whole log / 24 hours); with --bypass-summary a bare number is hours")
+    ap.add_argument("--json", dest="as_json", action="store_true",
+                    help="with --usage: one JSON object instead of text")
     ap.add_argument("--hook-pretooluse", dest="hook", action="store_true",
                     help="Claude Code PreToolUse hook: read the hook JSON on stdin, log a bypass")
     ap.add_argument("--mode", default="", choices=["", "log", "deny"],
@@ -1990,7 +2019,23 @@ def main(argv=None) -> int:
             print(out)
         return code
     if a.bypass_summary:
-        print(bypass_summary(a.session, a.since_hours))
+        hours = a.since_hours
+        if a.since:
+            try:
+                # Before --usage existed `--since 24` abbreviated --since-hours, so a bare number stays hours.
+                hours = float(a.since) if re.fullmatch(r"\d+(\.\d+)?", a.since.strip()) \
+                    else tg_usage.parse_since(a.since) / 3600.0
+            except (ValueError, AttributeError) as exc:
+                print("tool-guardian: %s" % exc, file=sys.stderr)
+                return 2
+        print(bypass_summary(a.session, hours))
+        return 0
+    if a.usage:
+        try:
+            print(usage_report(a.since, a.as_json))
+        except ValueError as exc:
+            print("tool-guardian: %s" % exc, file=sys.stderr)
+            return 2
         return 0
     if a.skills_report:
         skills_report(scan_skills(SKILLS_DIRS))

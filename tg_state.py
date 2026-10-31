@@ -181,13 +181,18 @@ def last_session_groups(state, current_session=""):
     return {"session": best.get("id"), "updated": best.get("updated"), "groups": list(best["active_groups"])}
 
 
-def record_catalogue(path, servers_tools, now=None):
-    """Remember the last advertised ``{server: [tool names]}``; return the new state."""
+def record_catalogue(path, servers_tools, now=None, tokens=None, router_tokens=None):
+    """Remember the last advertised ``{server: [tool names]}``; return the new state.
+    ``tokens`` ({server: full tools/list cost}) and ``router_tokens`` feed ``--usage``; omitted, they are not stored."""
     state = load_state(path)
     servers = {}
     for server, names in (servers_tools or {}).items():
         servers[server] = _names(names)
     state["catalogue"] = {"updated": _stamp(now), "servers": {name: servers[name] for name in sorted(servers)}}
+    if tokens is not None:
+        state["catalogue"]["tokens"] = {name: int(tokens[name]) for name in sorted(tokens)}
+    if router_tokens is not None:
+        state["catalogue"]["router_tokens"] = int(router_tokens)
     save_state(path, state)
     return state
 
