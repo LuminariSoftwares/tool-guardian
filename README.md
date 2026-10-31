@@ -329,7 +329,7 @@ Pure standard library — nothing else to install.
 
 > PyPI and npm now ship the same code: `pip install tool-guardian` (0.3.0+) for the MCP server, `dsh-tool-guardian` on npm for DSH.
 
-Which install is which: the Python package `tool-guardian` **0.8.3** is the MCP server (`pip install tool-guardian`, or `uvx tool-guardian`); the npm package `dsh-tool-guardian` **0.8.3-beta.1** is the DeepSeek Harness bundle. They are versioned separately.
+Which install is which: the Python package `tool-guardian` **0.9.0** is the MCP server (`pip install tool-guardian`, or `uvx tool-guardian`); the npm package `dsh-tool-guardian` **0.9.0-beta.1** is the DeepSeek Harness bundle. They are versioned separately.
 
 ## Configure
 
@@ -886,7 +886,7 @@ Four small MIT-licensed tools for people running local models. Each does one job
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q                      # 284 tests; 3 skip until the npm install below has run, 1 runs only on Windows
+python -m pytest -q                      # 373 tests; 3 skip until the npm install below has run, 1 runs only on Windows
 npm install --no-package-lock --legacy-peer-deps
 npm run check && npm run test:node       # bundle syntax, text-call parser and repair
 node tests/dsh_smoke.mjs && node tests/probe_dsh_mvp.mjs && node tests/probe_dsh_loopguard.mjs
