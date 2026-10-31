@@ -30,6 +30,8 @@ from pathlib import Path
 POLICY_ENV = "TOOL_GUARDIAN_POLICY"
 TTL_ENV = "TOOL_GUARDIAN_CONFIRM_TTL"
 DEFAULT_TTL = 120.0
+ELICIT_ENV = "TOOL_GUARDIAN_ELICIT_TIMEOUT"
+DEFAULT_ELICIT_TIMEOUT = 300.0
 TOKEN_CHARS = 32            # hex chars of the HMAC kept: 128 bits, short enough for a small model to copy
 
 
@@ -46,6 +48,43 @@ def confirm_ttl() -> float:
         return max(0.0, float(os.environ.get(TTL_ENV, "") or DEFAULT_TTL))
     except ValueError:
         return DEFAULT_TTL
+
+
+def elicit_timeout() -> float:
+    """Seconds to wait for the human's answer to an elicitation (TOOL_GUARDIAN_ELICIT_TIMEOUT, default 300)."""
+    try:
+        return max(0.0, float(os.environ.get(ELICIT_ENV, "") or DEFAULT_ELICIT_TIMEOUT))
+    except ValueError:
+        return DEFAULT_ELICIT_TIMEOUT
+
+
+def form_elicitation(caps) -> bool:
+    """Does a client's `capabilities` offer elicitation in form mode? `{}` means form only (spec 2025-11-25);
+    `{"url": {}}` alone is not enough."""
+    e = caps.get("elicitation") if isinstance(caps, dict) else None
+    return isinstance(e, dict) and (not e or "form" in e)
+
+
+def elicit_params(server: str, tool: str, args) -> dict:
+    """The `params` of an elicitation/create asking the human to confirm one call: a form with one boolean."""
+    shown = json.dumps(args, separators=(",", ":"), ensure_ascii=False, default=str)
+    msg = "Tool Guardian policy asks before running %s.%s. Allow it?" % (server, tool)
+    msg += " Arguments: " + shown if len(shown) <= 200 else " (%d characters of arguments not shown)" % len(shown)
+    return {"message": msg,
+            "requestedSchema": {"type": "object", "required": ["confirm"], "properties": {
+                "confirm": {"type": "boolean", "title": "Run it", "description": "True to run the tool."}}}}
+
+
+def elicit_outcome(result) -> str:
+    """accept, or why not: decline / cancel / unconfirmed (accepted without confirm true) / error (anything else).
+    Takes the ElicitResult; the caller maps a JSON-RPC error reply to "error" itself."""
+    if not isinstance(result, dict):
+        return "error"
+    action = result.get("action")
+    if action == "accept":
+        content = result.get("content")
+        return "accept" if isinstance(content, dict) and content.get("confirm") is True else "unconfirmed"
+    return action if action in ("decline", "cancel") else "error"
 
 
 class Gate:

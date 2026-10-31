@@ -749,11 +749,7 @@ Ask before anything whose name contains `shell`, `exec`, `write` or `rm`.
 
 `confirm` is deliberately not in the `call_tool` schema (the descriptions, and the 1,100-token `tools/list`, stay as they are); the router accepts it anyway. The token is an HMAC-SHA256 over the server, tool, arguments and a nonce under a secret that lives only in the running process, is valid for 120 seconds (`TOOL_GUARDIAN_CONFIRM_TTL`) and works once, for exactly that call. A token for other arguments, another tool, an expired or a used one runs nothing and you get a fresh `CONFIRM_REQUIRED`.
 
-**The model confirms, not you -- unless your client offers elicitation (next section).** The token goes to the model and the model passes it back, so `ask` stops a model that has not thought about what it is about to do, not one that is trying to get round it. If you need a person in the loop today, use `deny`.
-
-### Human confirmation (elicitation): not built yet
-
-MCP clients that support elicitation can put a yes/no question to the person. Tool Guardian does not use it yet; until it does, every `ask` is answered by the model.
+**The model confirms, not you -- unless your client offers elicitation (see [Ask a human](#ask-a-human)).** The token goes to the model and the model passes it back, so `ask` stops a model that has not thought about what it is about to do, not one that is trying to get round it. If your client cannot show a dialog and you need a person in the loop, use `deny`.
 
 ### Check a policy without running anything
 
@@ -763,6 +759,23 @@ tool-guardian --policy-check --list notes                      # one line per to
 ```
 
 `--policy-check` starts the servers in your config (use `--config F` for another one) to read their annotations, and exits 0 for `allow`, 3 for `deny`, 4 for `ask`, 2 for a usage error or a server that is not up. `--prove` ignores the policy file on purpose (see [Prove your model drives the router](#prove-your-model-drives-the-router)).
+
+## Ask a human
+
+On a client that can show a yes/no dialog, an `ask` rule asks **you** instead of handing the model a token. The dialog reads `Tool Guardian policy asks before running <server>.<tool>. Allow it?` with the arguments as compact JSON (left out when they are longer than 200 characters). The tool runs only if you answer yes.
+
+**Which clients get the dialog:**
+
+- a client that negotiated protocol `2025-06-18` or `2025-11-25` in `initialize` **and** declared the `elicitation` capability in form mode (`{}` or `{"form": {}}`); or
+- a `2026-07-28` request that carries form elicitation in its `_meta` client capabilities. That revision has no `initialize`, so the router answers the call with `resultType: "input_required"` and one elicitation request, and runs the tool when the retry comes back with your yes. The `requestState` it hands out is signed, works once and is tied to that server, tool and arguments.
+
+**Every other client keeps the confirm token** described above: `2024-11-05` and `2025-03-26` clients, a client with no `elicitation` capability, and one that offers URL mode only. A `2024-11-05` client sees the router exactly as before. A capable client is never given a token: the model cannot answer for you, and a `confirm` it sends is ignored.
+
+Anything but an explicit yes runs nothing and returns `USER_DECLINED <outcome>`: `decline`, `cancel`, `unconfirmed` (accepted without ticking confirm), `error` (the client answered with a JSON-RPC error) or `timeout`. If the client closes the connection while the dialog is open, nothing runs and the router exits. Each question is written to the call log as a `kind: "policy"` row with `"via": "elicitation"` and the `outcome` (`accept` or the reason it did not run).
+
+`TOOL_GUARDIAN_ELICIT_TIMEOUT` is how many seconds to wait for your answer (default 300); a reply that arrives later is ignored.
+
+**Claude Code** shows the dialog only in interactive terminal sessions. A non-interactive session (`claude -p`, CI) cannot show it and cancels, which the model sees as `USER_DECLINED cancel`: there, use `deny`, or accept that the call will not run. This is tested against a scripted client that speaks each of the protocol revisions above; it has not yet been run against a live Claude Code session.
 
 ## Bypass detection over plain MCP (and its limits)
 

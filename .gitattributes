@@ -1,0 +1,2 @@
+# The A3b floor fixture is compared by sha256: a Windows checkout must not turn its LF into CRLF.
+tests/fixtures/p110_a3b_floor.jsonl -text
