@@ -108,6 +108,7 @@ tg_usage = _optional("tg_usage")      # --usage: a counted report from the call 
 tg_state = _optional("tg_state")      # session ids, state.json, call-log summary, Claude Code hook
 tg_update = _optional("tg_update")    # the one "update available" line
 tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
+tg_embed = _optional("tg_embed")      # search by meaning (off unless TOOL_GUARDIAN_EMBED_URL is set)
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
 tg_prove = _optional("tg_prove")      # --prove: three bundled prompts against a model endpoint
 tg_http = _optional("tg_http")        # remote ("url") backends over Streamable HTTP
@@ -1157,6 +1158,7 @@ class Router:
         self.options = dict(load_options(config))
         self.options.update({k: v for k, v in (options or {}).items() if v not in (None, "", {}, [])})
         self._last_meta = {}
+        self._embed_off_logged = False   # "search by meaning off" is logged once per Router
         self.native_groups = False   # True under the DSH plugin, where activate_group exists
         self._spill = None
         self.stats = {"calls": 0, "errors": 0, "shaped": 0, "spilled": 0, "archive_failures": 0,
@@ -1371,6 +1373,54 @@ class Router:
                        "server name) to see a tool's args, then call_tool.")
         return "\n".join(out) or "no backends configured"
 
+    def _keyword_score(self, name: str, b: "Backend", t: dict, tokens: list):
+        """One tool's keyword score for search(); 0 = no hit."""
+        tname = str(t.get("name") or "")
+        low_desc = short(t.get("description"), RANK_DESC_WORDS).lower()
+        if tg_rank is not None:
+            return tg_rank.score({"name": tname, "description": low_desc}, name, tokens,
+                                 (b.spec or {}).get("hints"))
+        score = 0
+        for tok in tokens:
+            if tok in tname.lower():
+                score += 3
+            if tok == name.lower():
+                score += 2
+            if tok in low_desc:
+                score += 1
+        return score
+
+    def _semantic(self, query: str):
+        """Search by meaning, when TOOL_GUARDIAN_EMBED_URL is set: (query vector, {"server.tool": vector},
+        minimum cosine), or None -- unset, or the endpoint failed (then search() answers by keywords and this
+        says so once). The vectors cover every visible tool of every ok backend, so the cache key does not
+        move with the `server` filter."""
+        if tg_embed is None:
+            return None
+        url = os.environ.get(tg_embed.URL_ENV, "").strip()
+        if not url:
+            return None
+        model = os.environ.get(tg_embed.MODEL_ENV, "").strip() or tg_embed.DEFAULT_MODEL
+        try:
+            minimum = float(os.environ.get(tg_embed.MIN_ENV, "").strip() or tg_embed.DEFAULT_MIN)
+        except ValueError:
+            minimum = tg_embed.DEFAULT_MIN
+        entries = [[name, str(t.get("name") or ""), str(t.get("description") or "")]
+                   for name, b in sorted(self.backends.items()) if b.status == "ok" for t in self._tools(b)]
+        if not entries:
+            return None
+        try:
+            vectors = tg_embed.tool_vectors(entries, url, model)
+            qv = tg_embed.embed([query], url, model)[0]
+            if any(len(v) != len(qv) for v in vectors.values()):
+                raise ValueError("the cached tool vectors and the query vector differ in length")
+        except (tg_embed.EmbedError, ValueError) as e:
+            if not self._embed_off_logged:
+                self._embed_off_logged = True
+                log("search by meaning off, searching by keywords: %s" % e)
+            return None
+        return qv, vectors, minimum
+
     def search(self, query: str, server: str = "", limit=None) -> str:
         """Find a tool by keyword, one line per hit, in the catalogue's own format.
         The full listing of a big server is expensive in both directions -- the
@@ -1390,6 +1440,7 @@ class Router:
             # is the exact misreading this file refuses to allow.
             return self.catalogue(server)
         tokens = [t for t in re.findall(r"[a-z0-9]+", (query or "").lower()) if len(t) > 1]
+        sem = self._semantic(query)
         hits = []
         for name, b in sorted(self.backends.items()):
             if server and name != server:
@@ -1398,19 +1449,14 @@ class Router:
                 continue
             for t in self._tools(b):
                 tname = str(t.get("name") or "")
-                low_desc = short(t.get("description"), RANK_DESC_WORDS).lower()
-                if tg_rank is not None:
-                    score = tg_rank.score({"name": tname, "description": low_desc}, name, tokens,
-                                          (b.spec or {}).get("hints"))
-                else:
-                    score = 0
-                    for tok in tokens:
-                        if tok in tname.lower():
-                            score += 3
-                        if tok == name.lower():
-                            score += 2
-                        if tok in low_desc:
-                            score += 1
+                score = self._keyword_score(name, b, t, tokens)
+                if sem is not None:
+                    key = "%s.%s" % (name, tname)
+                    cos = tg_embed.cosine(sem[0], sem[1][key])
+                    if cos >= sem[2]:   # a keyword hit alone lists nothing
+                        hits.append((cos + tg_embed.KEYWORD_WEIGHT * score, key,
+                                     "%s.%s: %s" % (name, tname, short(t.get("description")))))
+                    continue
                 if score:
                     hits.append((score, "%s.%s" % (name, tname),
                                  "%s.%s: %s" % (name, tname, short(t.get("description")))))
