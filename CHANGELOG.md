@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+Per-tool safety policy: deny tools, ask before others (a confirm token), or make a session read-only.
+
+- **`policy.json`.** `$TOOL_GUARDIAN_POLICY`, else `~/.tool-guardian/policy.json`, read when the router starts:
+  `{"readOnly": bool, "servers": {"<server> or *": {"allow": [regex], "deny": [regex], "ask": [regex]}}}`. Regexes are
+  `re.search`ed on the bare tool name; a server's entry and `*` merge. Order: `readOnly` (a tool whose annotations lack
+  `readOnlyHint: true` is denied), `deny`, an `allow` list that matches nothing (denied, rule `allow`), `ask`. No file
+  is today's behaviour exactly; a file that is not valid JSON fails closed (`POLICY_DENIED policy file unreadable: ...`).
+- **Denied tools are invisible** in `list_capabilities`, `search_capabilities` and `list_groups_with_costs`;
+  `call_tool` (or `describe_tool`) on one returns `POLICY_DENIED <rule>` and never reaches the server.
+- **`ask` returns `CONFIRM_REQUIRED <token>`.** Call `call_tool` again with the same server, tool and args plus a
+  top-level `confirm`. The token is HMAC-SHA256 under a per-process secret, single use, 120 s
+  (`TOOL_GUARDIAN_CONFIRM_TTL`). `confirm` is not in the `call_tool` schema, so `tools/list` is unchanged. **The model
+  confirms, not the user**; the human gate (elicitation) is a later release.
+- **`tool-guardian --policy-check SERVER TOOL '<args-json>'`** prints `allow` / `deny <rule>` / `ask <rule>` and exits
+  0 / 3 / 4; `--policy-check --list SERVER` prints one verdict per tool. Every deny and ask is a `kind: "policy"` row in
+  the call log, and `--bypass-summary` adds `policy denials: <n>`. `--prove` runs with the policy off.
+  New module `tg_policy.py`; `tests/test_p110_a3.py` is the acceptance file.
+
 Remote MCP servers: a `"url"` entry is routed over Streamable HTTP instead of being reported `UNSUPPORTED`.
 
 - **Streamable HTTP backends.** New module `tg_http.py` (standard library only). It tells the stateless 2026-07-28

@@ -30,6 +30,7 @@
     "tg_prove.py",
     "tg_usage.py",
     "tg_http.py",
+    "tg_policy.py",
     "README.md",
     "llms.txt",
     "CHANGELOG.md",

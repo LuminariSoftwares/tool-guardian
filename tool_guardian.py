@@ -20,6 +20,9 @@ list_skills / read_skill (when skills are configured). Decisions: docs/adr/.
     tool-guardian --usage              what the router saved, counted from the call log
     tool-guardian --hook-pretooluse    Claude Code PreToolUse hook: logs (or denies) shell
                                        calls that do a router tool's job
+    tool-guardian --policy-check SERVER TOOL '{}'
+                                       what ~/.tool-guardian/policy.json does to one call:
+                                       allow / deny <rule> / ask <rule> (exit 0 / 3 / 4)
 
 WHY THIS EXISTS
     MCP tool definitions are re-sent on EVERY request, whether the model touches
@@ -106,6 +109,7 @@ tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
 tg_prove = _optional("tg_prove")      # --prove: three bundled prompts against a model endpoint
 tg_http = _optional("tg_http")        # remote ("url") backends over Streamable HTTP
+tg_policy = _optional("tg_policy")    # per-tool deny / ask / readOnly policy and the confirm-token gate
 
 __version__ = "0.8.3"  # keep equal to pyproject.toml version
 
@@ -1124,8 +1128,17 @@ class Backend:
 
 # --------------------------------------------------------------- config ------
 
+class _PolicyMissing:
+    """Stands in when a policy file exists but tg_policy.py is not beside tool_guardian.py: fail closed."""
+    error = "tg_policy.py is not beside tool_guardian.py"
+
+    @staticmethod
+    def decide(server: str, tool: str, annotations=None) -> tuple:
+        return "deny", "policy file unreadable: " + _PolicyMissing.error
+
+
 class Router:
-    def __init__(self, config: str = "", options: dict = None):
+    def __init__(self, config: str = "", options: dict = None, policy: bool = True):
         self.config = config
         self.backends = {}
         # The config file's `toolGuardian` block is the base; `options` (the DSH
@@ -1154,6 +1167,73 @@ class Router:
         # Discovery ceiling: discovery calls since the last call_tool, capped at discoveryLimit (default 8).
         self._ceiling = (tg_ceiling.DiscoveryCeiling(int(self.options.get("discoveryLimit") or 8))
                          if tg_ceiling is not None else None)
+        # The per-tool policy (tg_policy.py), read once here. None = no policy: every path below is then the
+        # code it was before the policy existed. `policy=False` is --prove, a capability test on a stub server.
+        self.policy = None
+        self._gate = None
+        if policy:
+            self.policy = self._load_policy()
+            if self.policy is not None:
+                self._gate = tg_policy.Gate(ttl=tg_policy.confirm_ttl()) if tg_policy is not None else None
+
+    @staticmethod
+    def _load_policy():
+        env = os.environ.get("TOOL_GUARDIAN_POLICY", "").strip()
+        if tg_policy is None:
+            # A policy file this copy cannot parse must not be silently ignored: that would fail open.
+            if os.path.isfile(env or str(Path.home() / ".tool-guardian" / "policy.json")):
+                return _PolicyMissing()
+            return None
+        pol = tg_policy.load()
+        return pol if pol.active else None
+
+    def _verdict(self, server: str, tool: str) -> tuple:
+        """(allow|deny|ask, rule) for one tool of one server; allow when there is no policy."""
+        if self.policy is None:
+            return "allow", ""
+        b = self.backends.get(server)
+        found = b.find(tool) if b is not None else None
+        return self.policy.decide(server, tool, (found or {}).get("annotations"))
+
+    def _tools(self, b: "Backend") -> list:
+        """A backend's tools as the model may see them: denied ones are left out."""
+        if self.policy is None:
+            return b.tools
+        return [t for t in b.tools if self._verdict(b.name, str(t.get("name") or ""))[0] != "deny"]
+
+    @staticmethod
+    def _denied_text(rule: str) -> str:
+        why = {"readOnly": "this session is read-only and the server does not mark the tool readOnlyHint",
+               "allow": "it is not on the allow list"}.get(rule, "a deny rule matches it")
+        if rule.startswith("policy file unreadable"):
+            why = "the policy file could not be read, so every tool is blocked"
+        return ("POLICY_DENIED %s\nThe user's tool-guardian policy blocks this tool (%s). Nothing ran. Do not retry "
+                "it or look for another way around it; tell the user." % (rule, why))
+
+    def _policy_gate(self, b: "Backend", tool: str, args: dict) -> str:
+        """The text to return INSTEAD of calling the tool, or "" to go ahead."""
+        verdict, rule = self._verdict(b.name, tool)
+        if verdict == "allow":
+            return ""
+        if verdict == "ask" and not (b.status == "ok" and b.find(tool)):
+            return ""   # nothing to confirm: the ordinary "no such tool" / UNKNOWN answer follows
+        row = {"kind": "policy", "server": b.name, "target": tool, "decision": verdict, "rule": rule}
+        if verdict == "deny":
+            self.log_call(row)
+            self._last_meta = {"is_error": True, "rule": "policy_deny"}
+            return self._denied_text(rule)
+        ahash = tg_policy.args_hash(args.get("args") or {})
+        token = args.get("confirm")
+        if token and self._gate.redeem(str(token), b.name, tool, ahash):
+            return ""
+        self.log_call(row)
+        self._last_meta = {"is_error": False, "rule": "policy_ask"}
+        new = self._gate.issue(b.name, tool, ahash)
+        return ("CONFIRM_REQUIRED %s\n%s%s.%s needs confirmation (policy rule %s) and has NOT run: to run it, call "
+                "call_tool again with the same server, tool and args plus a top-level \"confirm\": \"%s\" "
+                "(single use, valid for %gs)."
+                % (new, "That confirm token was not accepted (reused, expired, or for other arguments). " if token
+                   else "", b.name, tool, rule, new, self._gate.ttl))
 
     def start(self, servers: dict = None) -> None:
         """Start every backend AT ONCE. Backend.start() never raises (a failure becomes
@@ -1213,9 +1293,13 @@ class Router:
             if b.status != "ok":
                 return ("%s: %s -- %s\nThis is UNKNOWN, not an empty tool list."
                         % (server, b.status, b.error))
+            tools = self._tools(b)
+            if self.policy is not None and b.tools and not tools:
+                return ("%s: no tools are available -- the user's tool-guardian policy blocks all of them. "
+                        "Do not look for another way around it; tell the user." % server)
             listing = _within_budget(
                 ["%s.%s: %s\n    args: %s" % (server, t.get("name"), short(t.get("description")),
-                                              compact_args(t.get("inputSchema"))) for t in b.tools],
+                                              compact_args(t.get("inputSchema"))) for t in tools],
                 "\n", "\n[+%%d more tools not shown (TOOL_GUARDIAN_CATALOGUE_CHARS=%d): "
                       "search_capabilities with a keyword and server %s finds them]" % (CATALOGUE_CHARS, server))
             # The next step goes in the RESULT, not only the tool description: a
@@ -1229,8 +1313,9 @@ class Router:
             if b.status != "ok":
                 out.append("[%s] %s: %s" % (name, b.status, b.error[:160]))
                 continue
-            out.append("[%s] %d tools: %s" % (name, len(b.tools), _within_budget(
-                [t.get("name", "?") for t in b.tools], ", ", ", +%d more")))
+            tools = self._tools(b)
+            out.append("[%s] %d tools: %s" % (name, len(tools), _within_budget(
+                [t.get("name", "?") for t in tools], ", ", ", +%d more")))
         if out:
             out.append("\nNEXT STEP: use search_capabilities with a keyword (or list_capabilities with one "
                        "server name) to see a tool's args, then call_tool.")
@@ -1261,7 +1346,7 @@ class Router:
                 continue
             if b.status != "ok":
                 continue
-            for t in b.tools:
+            for t in self._tools(b):
                 tname = str(t.get("name") or "")
                 low_desc = short(t.get("description"), RANK_DESC_WORDS).lower()
                 if tg_rank is not None:
@@ -1384,7 +1469,7 @@ class Router:
         return shaped, meta
 
     def servers_tools(self) -> dict:
-        return {n: list(b.tools) for n, b in sorted(self.backends.items()) if b.status == "ok"}
+        return {n: list(self._tools(b)) for n, b in sorted(self.backends.items()) if b.status == "ok"}
 
     def log_call(self, entry: dict) -> None:
         """One JSON line per router call / reported bypass. Argument VALUES are never
@@ -1483,6 +1568,9 @@ class Router:
                         "list_capabilities(server=\"%s\")"
                         % (b.name, args.get("tool"),
                            ", ".join(x.get("name", "?") for x in b.tools), b.name))
+            verdict, rule = self._verdict(b.name, str(t.get("name") or ""))
+            if verdict == "deny":
+                return self._denied_text(rule)
             nxt = ("\n\nNEXT STEP: use call_tool with server %s, tool %s, args: %s."
                    % (b.name, t.get("name"), compact_args(t.get("inputSchema"))))
             if str(args.get("detail") or DESCRIBE_DETAIL).lower() == "full":
@@ -1500,6 +1588,10 @@ class Router:
                 return ("no server named %r. Known: %s\n\nNEXT STEP: list_capabilities()"
                         % (args.get("server"), ", ".join(sorted(self.backends))))
             tool = _bare_tool(b, str(args.get("tool") or ""))
+            if self.policy is not None:
+                held = self._policy_gate(b, tool, args)
+                if held:
+                    return held
             sent = args.get("args") or {}
             # ---- T2: check the arguments against the tool's own schema first. A
             # call that cannot possibly work should cost a string comparison here,
@@ -2019,12 +2111,71 @@ def bypass_summary(session: str = "", since_hours: float = 24.0, log_path: str =
         session = tg_state.last_session(rows)
     if session and session != "all":
         summary = tg_state.summarize(rows, session=session)
+        scoped = tg_state._scope_rows(rows, session, None)
     elif session == "all":
         summary = tg_state.summarize(rows)
+        scoped = tg_state._scope_rows(rows, None, None)
     else:
         since = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - since_hours * 3600))
         summary = tg_state.summarize(rows, since=since)
-    return "call log: %s\n%s" % (path, tg_state.render_bypass_summary(summary))
+        scoped = tg_state._scope_rows(rows, None, since)
+    out = "call log: %s\n%s" % (path, tg_state.render_bypass_summary(summary))
+    if tg_policy is not None:
+        denied = tg_policy.count_denials(scoped)
+        # No policy and no denial: the report is the one it always was.
+        if denied or tg_policy.exists():
+            out += "\n  policy denials: %d" % denied
+    return out
+
+
+def policy_check(config: str, values: list, list_server: str = "", out=None) -> int:
+    """`--policy-check SERVER TOOL ARGS_JSON` or `--policy-check --list SERVER`: what the policy file does, without
+    running anything. Exit 0 allow, 3 deny, 4 ask; 2 for a usage error or a server that is not up."""
+    out = out or sys.stdout
+    if tg_policy is None:
+        print("--policy-check unavailable: tg_policy.py is not beside tool_guardian.py", file=sys.stderr)
+        return 2
+    if list_server:
+        if values:
+            print("tool-guardian: --policy-check --list SERVER takes no other arguments", file=sys.stderr)
+            return 2
+        server, tool = list_server, ""
+    elif len(values) in (2, 3):
+        server, tool = values[0], values[1]
+        try:
+            json.loads(values[2]) if len(values) == 3 and values[2].strip() else None
+        except ValueError as exc:
+            print("tool-guardian: the args are not valid JSON: %s" % exc, file=sys.stderr)
+            return 2
+    else:
+        print("tool-guardian: usage: --policy-check SERVER TOOL '<args-json>'   or   --policy-check --list SERVER",
+              file=sys.stderr)
+        return 2
+    r = Router(config)
+    r.remember_catalogue = lambda: None   # a check must not rewrite state.json
+    r.start()
+    try:
+        b = r.backends.get(server)
+        if b is None or b.status != "ok":
+            print("tool-guardian: %s" % ("no server named %r. Known: %s" % (server, ", ".join(sorted(r.backends)))
+                                          if b is None else "server %r is %s: %s" % (server, b.status, b.error)),
+                  file=sys.stderr)
+            return 2
+        if list_server:
+            for t in b.tools:
+                name = str(t.get("name") or "")
+                verdict, rule = r._verdict(server, name)
+                print(("%s %s %s" % (verdict, name, rule)).rstrip(), file=out)
+            return 0
+        if b.find(tool) is None:
+            print("tool-guardian: note: server %r has no tool %r; the verdict is from the rules alone"
+                  % (server, tool), file=sys.stderr)
+        verdict, rule = r._verdict(server, tool)
+        print(("%s %s" % (verdict, rule)).rstrip(), file=out)
+        return {"allow": 0, "deny": 3, "ask": 4}[verdict]
+    finally:
+        for backend in r.backends.values():
+            backend.stop()
 
 
 def usage_report(since: str = "", as_json: bool = False, log_path: str = "") -> str:
@@ -2081,6 +2232,11 @@ def main(argv=None) -> int:
                     help="with --hook-pretooluse: log (default) or deny ($TOOL_GUARDIAN_HOOK_MODE)")
     ap.add_argument("--rules", default="",
                     help="with --hook-pretooluse: JSON allow/deny rules file, applied first")
+    ap.add_argument("--policy-check", dest="policy_check", nargs="*", default=None, metavar="ARG",
+                    help="SERVER TOOL '<args-json>': print allow / deny <rule> / ask <rule> for that call under "
+                         "the policy file and exit 0 / 3 / 4. With --list SERVER: one line per tool of the server")
+    ap.add_argument("--list", dest="policy_list", default="", metavar="SERVER",
+                    help="with --policy-check: the verdict for every tool of SERVER")
     ap.add_argument("--skills-report", dest="skills_report", action="store_true",
                     help="print the token saving for skills configured in "
                          "TOOL_GUARDIAN_SKILLS and exit")
@@ -2136,6 +2292,8 @@ def main(argv=None) -> int:
         read_tunables()
     if a.selftest:
         return selftest(a.config)
+    if a.policy_check is not None or a.policy_list:
+        return policy_check(a.config, a.policy_check or [], a.policy_list)
     if a.prove:
         if tg_prove is None:
             print("--prove unavailable: tg_prove.py is not beside tool_guardian.py")
