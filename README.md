@@ -12,6 +12,7 @@
   <img alt="Dependencies: none" src="https://img.shields.io/badge/python%20deps-none-2ea44f.svg">
   <img alt="MCP server" src="https://img.shields.io/badge/MCP-server-6f42c1.svg">
   <a href="https://hub.xerj.org/contributors/LuminariSoftwares"><img alt="XERJ Corpus Hub contributor" src="https://hub.xerj.org/contributors/LuminariSoftwares/badge.svg"></a>
+  <a href="https://glama.ai/mcp/servers/LuminariSoftwares/tool-guardian"><img alt="tool-guardian MCP server – quality and maintenance score on Glama" src="https://glama.ai/mcp/servers/LuminariSoftwares/tool-guardian/badges/score.svg"></a>
 </p>
 
 mcp-name: io.github.LuminariSoftwares/tool-guardian
