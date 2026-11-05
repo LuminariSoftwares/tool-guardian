@@ -151,6 +151,7 @@ class Policy:
         self.error = error
         self.read_only = False
         self.rules = {}
+        self.on_flag = None
         if data is None or error:
             return
         try:
@@ -164,13 +165,15 @@ class Policy:
                 if not isinstance(entry, dict):
                     raise ValueError("servers.%s must be an object" % name)
                 self.rules[name] = {k: _patterns(entry, k, "servers." + name) for k in ("allow", "deny", "ask")}
+            if "on_flag" in data:
+                self.on_flag = _on_flag(data["on_flag"])
         except ValueError as exc:
             self.error = str(exc)
-            self.read_only, self.rules = False, {}
+            self.read_only, self.rules, self.on_flag = False, {}, None
 
     @property
     def active(self) -> bool:
-        return bool(self.error or self.read_only or self.rules)
+        return bool(self.error or self.read_only or self.rules or self.on_flag)
 
     def _merged(self, server: str, key: str) -> list:
         out = []
@@ -195,6 +198,37 @@ class Policy:
             if rx.search(tool):
                 return "ask", text
         return "allow", ""
+
+
+ON_FLAG_ACTIONS = ("warn", "ask", "deny")
+
+
+def _on_flag(value) -> dict:
+    """The optional top-level `on_flag` key (P141 S1b): {"action": warn|ask|deny, "codes": [flag codes]}.
+    Flag codes are tg_poison's `injection.*` codes and `description.changed`; empty `codes` = any flag."""
+    if not isinstance(value, dict):
+        raise ValueError("on_flag must be an object like {\"action\": \"warn\", \"codes\": []}")
+    action = value.get("action", "warn")
+    if action not in ON_FLAG_ACTIONS:
+        raise ValueError("on_flag.action must be one of %s, not %r" % (", ".join(ON_FLAG_ACTIONS), action))
+    codes = value.get("codes", [])
+    if not isinstance(codes, list) or not all(isinstance(c, str) for c in codes):
+        raise ValueError("on_flag.codes must be a list of flag codes")
+    return {"action": action, "codes": list(codes)}
+
+
+def flag_action(policy, flags) -> tuple:
+    """(action, codes) for a tool carrying `flags`: the on_flag action when a flag is in its codes (or codes is
+    empty), else ("warn", flags). No flags -> ("", []). A missing policy or on_flag key means warn (TJ's intake
+    rule: warn, never auto-block by default)."""
+    flags = list(flags or [])
+    if not flags:
+        return "", []
+    rule = getattr(policy, "on_flag", None) if policy is not None else None
+    if not rule:
+        return "warn", flags
+    hit = flags if not rule["codes"] else [c for c in flags if c in rule["codes"]]
+    return (rule["action"], hit) if hit else ("warn", flags)
 
 
 def load(path: str = "") -> Policy:
