@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Poisoned-tool warning (P141 S1b).** Backend tool descriptions and schemas are checked against `tg_poison_patterns.json` at start; a flagged tool shows ` ⚠ flagged: <codes>` in `list_capabilities` and a `flags:` line in `describe_tool`, and a `call_tool` result whose first 64 KB matches gets one header line `flagged: <codes> (result unchanged)` -- the body is never edited. Descriptions are pinned trust-on-first-use in `pins.json` beside `state.json`; a later change adds `description.changed`. New optional policy key `on_flag` (`warn` default, `ask`, `deny`; `codes` empty = any flag).
+
 ## dsh-tool-guardian 0.9.1-beta.1 / PyPI tool-guardian 0.9.1 (2026-10-31)
 
 Search tools by meaning, optional and off by default: with an embeddings endpoint set, `search_capabilities` finds a tool by what it does rather than only by the words in its name (recall@3 over 40 queries: 80.0 and 82.5 against 35.0 by keywords). Nothing breaking: with the endpoint unset, search answers byte for byte as in 0.9.0.

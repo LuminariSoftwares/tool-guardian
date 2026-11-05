@@ -108,6 +108,7 @@ tg_usage = _optional("tg_usage")      # --usage: a counted report from the call 
 tg_state = _optional("tg_state")      # session ids, state.json, call-log summary, Claude Code hook
 tg_update = _optional("tg_update")    # the one "update available" line
 tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
+tg_poison = _optional("tg_poison")    # poisoned-description patterns + trust-on-first-use description pins (P141)
 tg_embed = _optional("tg_embed")      # search by meaning (off unless TOOL_GUARDIAN_EMBED_URL is set)
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
 tg_prove = _optional("tg_prove")      # --prove: three bundled prompts against a model endpoint
@@ -1308,6 +1309,88 @@ class Router:
                 b.fail_start("TimeoutError: no handshake within %gs (TOOL_GUARDIAN_START_TIMEOUT); "
                              "backend stopped" % START_TIMEOUT)
         self.remember_catalogue()
+        self.scan_flags()
+
+    def scan_flags(self) -> None:
+        """P141 S1b: flag each live backend tool whose description or schema text matches a tg_poison pattern, and
+        pin descriptions trust-on-first-use (pins.json beside state.json; "" state path disables). Stored per backend
+        as `b.flags = {tool: [codes]}`; `description.changed` is added when the pin says changed. Warn only: nothing
+        is hidden or edited here. A pins.json that cannot be read is logged once and left alone (fail open)."""
+        if tg_poison is None:
+            return
+        try:
+            patterns = tg_poison.load_patterns()
+        except Exception as exc:  # noqa: BLE001
+            log("poison patterns unavailable: %s" % exc)
+            return
+        path = tg_poison.pin_path(tg_state.default_state_path()) if tg_state is not None else ""
+        pins, save_ok = {}, bool(path)
+        if path and os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    pins = json.load(fh)
+                if not isinstance(pins, dict):
+                    raise ValueError("not a JSON object")
+            except Exception as exc:  # noqa: BLE001
+                log("pins.json unreadable (%s); description pins are off this session" % exc)
+                pins, save_ok = {}, False
+        added = False
+        for name, b in self.backends.items():
+            b.flags = {}
+            if b.status != "ok":
+                continue
+            for t in b.tools:
+                tool = str(t.get("name") or "")
+                desc = str(t.get("description") or "")
+                schema = t.get("inputSchema") or {}
+                try:
+                    found = tg_poison.scan_text(desc + "\n" + json.dumps(schema, sort_keys=True), patterns)
+                    codes = sorted({f["code"] for f in found})
+                    state = tg_poison.check_pin(name, tool, desc, pins, schema=schema) if save_ok else "same"
+                except Exception as exc:  # noqa: BLE001
+                    log("flag scan failed for %s.%s: %s" % (name, tool, exc))
+                    continue
+                added = added or state == "new"
+                if state == "changed":
+                    codes.append("description.changed")
+                if codes:
+                    b.flags[tool] = codes
+        if added and save_ok:
+            try:
+                tg_poison.save_pins(pins, path)
+            except Exception as exc:  # noqa: BLE001
+                log("pins.json not saved: %s" % exc)
+
+    def _flag_note(self, b: "Backend", tool: str) -> str:
+        codes = (getattr(b, "flags", None) or {}).get(tool) or []
+        return " \u26a0 flagged: %s" % ", ".join(codes) if codes else ""
+
+    def _flag_gate(self, b: "Backend", tool: str, args: dict) -> str:
+        """on_flag for a flagged tool: "" to go ahead (warn), else the text returned INSTEAD of calling it."""
+        if tg_policy is None:
+            return ""
+        action, codes = tg_policy.flag_action(self.policy, (getattr(b, "flags", None) or {}).get(tool))
+        if action in ("", "warn"):
+            return ""
+        rule = "on_flag " + ", ".join(codes)
+        row = {"kind": "policy", "server": b.name, "target": tool, "decision": action, "rule": rule}
+        if action == "deny":
+            self.log_call(row)
+            self._last_meta = {"is_error": True, "rule": "policy_deny"}
+            return ("BLOCKED by the user's tool-guardian policy (on_flag): %s.%s is flagged (%s) and has NOT run. "
+                    "Do not look for another way around it; tell the user." % (b.name, tool, ", ".join(codes)))
+        if self._client.get("mode") in ("elicit", "mrtr"):
+            return self._ask_human(b, tool, args, row)
+        ahash = tg_policy.args_hash(args.get("args") or {})
+        token = args.get("confirm")
+        if token and self._gate.redeem(str(token), b.name, tool, ahash):
+            return ""
+        self.log_call(row)
+        self._last_meta = {"is_error": False, "rule": "policy_ask"}
+        new = self._gate.issue(b.name, tool, ahash)
+        return ("CONFIRM_REQUIRED %s\n%s.%s is flagged (%s) and needs confirmation (policy on_flag) and has NOT run: "
+                "to run it, call call_tool again with the same server, tool and args plus a top-level \"confirm\": "
+                "\"%s\" (single use, valid for %gs)." % (new, b.name, tool, ", ".join(codes), new, self._gate.ttl))
 
     def remember_catalogue(self) -> None:
         """Tool names per live server into state.json: the Claude Code hook matches shell
@@ -1350,8 +1433,9 @@ class Router:
                 return ("%s: no tools are available -- the user's tool-guardian policy blocks all of them. "
                         "Do not look for another way around it; tell the user." % server)
             listing = _within_budget(
-                ["%s.%s: %s\n    args: %s" % (server, t.get("name"), short(t.get("description")),
-                                              compact_args(t.get("inputSchema"))) for t in tools],
+                ["%s.%s: %s%s\n    args: %s" % (server, t.get("name"), short(t.get("description")),
+                                                self._flag_note(b, str(t.get("name") or "")),
+                                                compact_args(t.get("inputSchema"))) for t in tools],
                 "\n", "\n[+%%d more tools not shown (TOOL_GUARDIAN_CATALOGUE_CHARS=%d): "
                       "search_capabilities with a keyword and server %s finds them]" % (CATALOGUE_CHARS, server))
             # The next step goes in the RESULT, not only the tool description: a
@@ -1672,9 +1756,12 @@ class Router:
                 return self._denied_text(rule)
             nxt = ("\n\nNEXT STEP: use call_tool with server %s, tool %s, args: %s."
                    % (b.name, t.get("name"), compact_args(t.get("inputSchema"))))
+            codes = (getattr(b, "flags", None) or {}).get(str(t.get("name") or "")) or []
+            flags = ("\nflags: %s%s" % (", ".join(codes), " (description changed since first seen)"
+                                          if "description.changed" in codes else "")) if codes else ""
             if str(args.get("detail") or DESCRIBE_DETAIL).lower() == "full":
-                return json.dumps(t, indent=2) + nxt
-            return describe_compact(b.name, t) + nxt
+                return json.dumps(t, indent=2) + flags + nxt
+            return describe_compact(b.name, t) + flags + nxt
         if name == "call_tool":
             if not str(args.get("server") or "") and args.get("tool"):
                 found_at = self._resolve_server(str(args.get("tool")))
@@ -1691,6 +1778,9 @@ class Router:
                 held = self._policy_gate(b, tool, args)
                 if held:
                     return held
+            held = self._flag_gate(b, tool, args)
+            if held:
+                return held
             sent = args.get("args") or {}
             # ---- T2: check the arguments against the tool's own schema first. A
             # call that cannot possibly work should cost a string comparison here,
@@ -1745,6 +1835,15 @@ class Router:
             if RAW_RESULTS:
                 return json.dumps(res, indent=2)[:LEGACY_CAP]
             text, is_error = render_result(res)
+            flag_head = ""
+            if tg_poison is not None:
+                try:   # cost bound: the first 64 KB of the result; the body is never edited
+                    hit = sorted({f["code"] for f in tg_poison.scan_text(text[:65536])})
+                except Exception as exc:  # noqa: BLE001
+                    log("result flag scan failed: %s" % exc)
+                    hit = []
+                if hit:
+                    flag_head = "flagged: %s (result unchanged)\n" % ", ".join(hit)
             loop_prefix = ""
             if guard:
                 # sha1 as a FINGERPRINT, not as a security primitive: it only has to
@@ -1780,7 +1879,7 @@ class Router:
                        % meta["spill_id"])
             else:
                 nxt = "answer the user from this result."
-            return loop_prefix + text + "\n\nNEXT STEP: " + nxt
+            return flag_head + loop_prefix + text + "\n\nNEXT STEP: " + nxt
         if name == "list_groups_with_costs":
             if tg_groups is None:
                 return "groups are unavailable: tg_groups.py is not beside tool_guardian.py"

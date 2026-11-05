@@ -807,6 +807,20 @@ tool-guardian --policy-check --list notes                      # one line per to
 
 `--policy-check` starts the servers in your config (use `--config F` for another one) to read their annotations, and exits 0 for `allow`, 3 for `deny`, 4 for `ask`, 2 for a usage error or a server that is not up. `--prove` ignores the policy file on purpose (see [Prove your model drives the router](#prove-your-model-drives-the-router)).
 
+### Poisoned-tool warning
+
+At start, every backend tool's description and input schema is checked against `tg_poison_patterns.json`: instructions aimed at the model, `<IMPORTANT>`-style blocks, invisible characters, credential paths and send-it-to-a-URL orders. A flagged tool keeps working; `list_capabilities` shows ` ⚠ flagged: <codes>` on its line, `describe_tool` adds a `flags:` line, and a `call_tool` result whose first 64 KB matches gets one header line, `flagged: <codes> (result unchanged)`. The result body is never edited. Descriptions are pinned trust-on-first-use in `pins.json` beside `state.json`: the first start after an install pins whatever is there, and a later change adds the flag `description.changed`.
+
+The optional `on_flag` key decides what a flag does (missing = `warn`; empty `codes` = any flag):
+
+```json
+{"on_flag": {"action": "warn", "codes": []}}
+{"on_flag": {"action": "ask",  "codes": ["description.changed"]}}
+{"on_flag": {"action": "deny", "codes": ["injection.tag_block", "injection.exfil_url"]}}
+```
+
+`ask` uses the same confirmation as an `ask` rule (a dialog where the client supports one, else the confirm token); `deny` blocks the call and names the codes. An unknown `action` is a policy error, so the policy fails closed.
+
 ## Ask a human
 
 On a client that can show a yes/no dialog, an `ask` rule asks **you** instead of handing the model a token. The dialog reads `Tool Guardian policy asks before running <server>.<tool>. Allow it?` with the arguments as compact JSON (left out when they are longer than 200 characters). The tool runs only if you answer yes.
