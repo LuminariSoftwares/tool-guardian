@@ -219,7 +219,7 @@ def _on_flag(value) -> dict:
 
 def flag_action(policy, flags) -> tuple:
     """(action, codes) for a tool carrying `flags`: the on_flag action when a flag is in its codes (or codes is
-    empty), else ("warn", flags). No flags -> ("", []). A missing policy or on_flag key means warn (TJ's intake
+    empty), else ("warn", flags). No flags -> ("", []). A missing policy or on_flag key means warn (the intake
     rule: warn, never auto-block by default)."""
     flags = list(flags or [])
     if not flags:

@@ -9,8 +9,8 @@ and in package.json `files`:
   DEFAULT_MIN: a float in (0, 1) -- the cosine a tool needs to be listed at all;
   KEYWORD_WEIGHT = 0.01 -- meaning first: rank = cosine + KEYWORD_WEIGHT * keyword_score (keyword only breaks ties).
   (Plan C8 said keyword*1.0 + cosine*4.0; measured 45-47.5 vs keyword 35 on real embeddings, under the +15 gate,
-  because keyword substring noise lists tools for unrelated queries and outranks paraphrase hits. TJ 2026-10-31
-  chose meaning first.)
+  because keyword substring noise lists tools for unrelated queries and outranks paraphrase hits. 2026-10-31:
+  meaning first was chosen.)
 - class EmbedError(Exception).
 - endpoint_kind(url) -> "ollama" when the URL path ends with "/api/embed", "openai" when it ends with
   "/embeddings" (e.g. "/v1/embeddings"); anything else raises ValueError.
