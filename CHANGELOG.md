@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## dsh-tool-guardian 0.10.0-beta.1 / PyPI tool-guardian 0.10.0 (2026-11-04)
 
+Poisoned-tool warnings, and two opt-in additions: `intent` on `call_tool` (`TOOL_GUARDIAN_INTENT=1`) and needs-X hints in `search_capabilities` (`TOOL_GUARDIAN_HINTS=1`). Nothing breaking: with both variables unset, the schema, search output and every reply are unchanged apart from the flag lines on a tool that matches a pattern.
+
+- **Packaging.** `tg_poison`, `tg_intent` and `tg_links` ship in the wheel and the npm bundle (with `tg_poison_patterns.json`). The pattern list is also built into `tg_poison.py`, so an install without the json beside it still flags.
 - **Needs-X hints in `search_capabilities` (P141 S3b, opt-in: `TOOL_GUARDIAN_HINTS=1`).** Under a hit, up to three lines `needs <param> from: <server>.<tool>` name the tools whose output (or description) supplies that hit's required input. Measured on the recorded bench servers: producer recall 20.8% -> 37.5% (`bench/bench_links.py`). Off by default: search output is unchanged.
 - **`intent` on `call_tool` (P141 S2b, opt-in: `TOOL_GUARDIAN_INTENT=1`).** When a result is big enough to be archived, `intent` returns only the chunks that match it (`[chunk i/N]`, joined by `...`), a `searchable terms:` line and the usual `retrieve_spill` pointer to the full original. Off by default: the schema and every reply are unchanged.
 - **Poisoned-tool warning (P141 S1b).** Backend tool descriptions and schemas are checked against `tg_poison_patterns.json` at start; a flagged tool shows ` ⚠ flagged: <codes>` in `list_capabilities` and a `flags:` line in `describe_tool`, and a `call_tool` result whose first 64 KB matches gets one header line `flagged: <codes> (result unchanged)` -- the body is never edited. Descriptions are pinned trust-on-first-use in `pins.json` beside `state.json`; a later change adds `description.changed`. New optional policy key `on_flag` (`warn` default, `ask`, `deny`; `codes` empty = any flag).
