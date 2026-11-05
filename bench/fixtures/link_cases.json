@@ -1,0 +1,125 @@
+{
+  "note": "Hand-written before any run, from the recorded bench catalogs (bench/fixtures/catalogs, 7 servers). Each case is a REQUIRED input of a consumer tool whose producer can be read off the catalog: an outputSchema property of that name (filesystem 'content', memory 'relations', n8n-mcp 'nodeType'), the consumer's own parameter description naming where the value comes from (playwright 'target' from the page snapshot, 'index' from browser_network_requests), or the producer's description plainly listing/searching the thing the parameter identifies (github issues, pull requests, repositories; filesystem paths; memory entities; n8n templates). One case per (consumer, param, producer) triple, several producers for one parameter allowed. Cases were not tuned or filtered after seeing either method's score.",
+  "cases": [
+    {
+      "consumer": "filesystem.write_file",
+      "param": "content",
+      "producer": "filesystem.read_text_file"
+    },
+    {
+      "consumer": "filesystem.write_file",
+      "param": "content",
+      "producer": "filesystem.read_file"
+    },
+    {
+      "consumer": "github.create_or_update_file",
+      "param": "content",
+      "producer": "filesystem.read_text_file"
+    },
+    {
+      "consumer": "filesystem.read_text_file",
+      "param": "path",
+      "producer": "filesystem.search_files"
+    },
+    {
+      "consumer": "filesystem.read_text_file",
+      "param": "path",
+      "producer": "filesystem.list_directory"
+    },
+    {
+      "consumer": "filesystem.list_directory",
+      "param": "path",
+      "producer": "filesystem.list_allowed_directories"
+    },
+    {
+      "consumer": "memory.delete_relations",
+      "param": "relations",
+      "producer": "memory.read_graph"
+    },
+    {
+      "consumer": "memory.open_nodes",
+      "param": "names",
+      "producer": "memory.search_nodes"
+    },
+    {
+      "consumer": "memory.delete_entities",
+      "param": "entityNames",
+      "producer": "memory.search_nodes"
+    },
+    {
+      "consumer": "n8n-mcp.get_node",
+      "param": "nodeType",
+      "producer": "n8n-mcp.search_nodes"
+    },
+    {
+      "consumer": "n8n-mcp.get_node",
+      "param": "nodeType",
+      "producer": "n8n-mcp.validate_node"
+    },
+    {
+      "consumer": "n8n-mcp.get_template",
+      "param": "templateId",
+      "producer": "n8n-mcp.search_templates"
+    },
+    {
+      "consumer": "n8n-mcp.validate_workflow",
+      "param": "workflow",
+      "producer": "n8n-mcp.get_template"
+    },
+    {
+      "consumer": "playwright.browser_click",
+      "param": "target",
+      "producer": "playwright.browser_snapshot"
+    },
+    {
+      "consumer": "playwright.browser_type",
+      "param": "target",
+      "producer": "playwright.browser_snapshot"
+    },
+    {
+      "consumer": "playwright.browser_hover",
+      "param": "target",
+      "producer": "playwright.browser_snapshot"
+    },
+    {
+      "consumer": "playwright.browser_click",
+      "param": "target",
+      "producer": "playwright.browser_find"
+    },
+    {
+      "consumer": "playwright.browser_network_request",
+      "param": "index",
+      "producer": "playwright.browser_network_requests"
+    },
+    {
+      "consumer": "github.get_issue",
+      "param": "issue_number",
+      "producer": "github.list_issues"
+    },
+    {
+      "consumer": "github.update_issue",
+      "param": "issue_number",
+      "producer": "github.search_issues"
+    },
+    {
+      "consumer": "github.get_pull_request",
+      "param": "pull_number",
+      "producer": "github.list_pull_requests"
+    },
+    {
+      "consumer": "github.merge_pull_request",
+      "param": "pull_number",
+      "producer": "github.list_pull_requests"
+    },
+    {
+      "consumer": "github.get_file_contents",
+      "param": "repo",
+      "producer": "github.search_repositories"
+    },
+    {
+      "consumer": "github.fork_repository",
+      "param": "repo",
+      "producer": "github.search_repositories"
+    }
+  ]
+}
