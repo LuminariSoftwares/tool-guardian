@@ -103,12 +103,12 @@ def test_readme_headline_figures_come_from_the_bench():
 def test_readme_proof_block_is_the_bench_output():
     """The code block under the headline is what `python bench/bench_tokens.py` prints: its lines
     appear in the bench's output in the same order, the totals and the per-request line included,
-    and it sits above Quick start."""
+    and it sits under Proof."""
     out = subprocess.run([sys.executable, str(ROOT / "bench" / "bench_tokens.py")],
                          capture_output=True, text=True, timeout=300, check=True).stdout.splitlines()
     m = re.search(r"```text\n\$ python bench/bench_tokens\.py\n(.*?)```", README, re.S)
     assert m, "no bench proof block"
-    assert m.start() < README.index("## Quick start")
+    assert m.start() > README.index("## Proof")
     shown = [line for line in m.group(1).splitlines() if line and line != "..."]
     at = 0
     for line in shown:

@@ -1,9 +1,5 @@
 <h1 align="center">Tool Guardian</h1>
 
-<p align="center"><b>Seven MCP servers for 1,084 tokens instead of 20,005 &mdash; and tool results that stop flooding the window.</b></p>
-
-<p align="center">One MCP server in front of all your others. Tested with <b>Claude Code, OpenCode, Cline and Continue</b> (one scripted-model turn per client, see <a href="#works-with">Works with</a>); Claude Desktop, Cursor and other stdio MCP clients: expected, not yet tested.</p>
-
 <p align="center">
   <a href="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml"><img alt="tests" src="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/privacy.yml"><img alt="privacy" src="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/privacy.yml/badge.svg?branch=main"></a>
@@ -12,62 +8,22 @@
   <img alt="Dependencies: none" src="https://img.shields.io/badge/python%20deps-none-2ea44f.svg">
   <img alt="MCP server" src="https://img.shields.io/badge/MCP-server-6f42c1.svg">
   <a href="https://hub.xerj.org/contributors/LuminariSoftwares"><img alt="XERJ Corpus Hub contributor" src="https://hub.xerj.org/contributors/LuminariSoftwares/badge.svg"></a>
+  <a href="https://pypi.org/project/tool-guardian/"><img alt="PyPI" src="https://img.shields.io/pypi/v/tool-guardian.svg"></a>
   <a href="https://glama.ai/mcp/servers/LuminariSoftwares/tool-guardian"><img alt="tool-guardian MCP server – quality and maintenance score on Glama" src="https://glama.ai/mcp/servers/LuminariSoftwares/tool-guardian/badges/score.svg"></a>
 </p>
 
+Status: active development -- [changelog](CHANGELOG.md)
+
 mcp-name: io.github.LuminariSoftwares/tool-guardian
 
-The headline is this repo's bench, run against the recorded `tools/list` answers of seven public MCP servers (no network, no model; abridged where marked):
+<p align="center"><b>Seven MCP servers for 1,084 tokens instead of 20,005.</b></p>
+<!-- c1 --><!-- c2 -->
 
-```text
-$ python bench/bench_tokens.py
-# Tool-Guardian Token Benchmark
-
-Token counting method: estimate:chars/3.5
-
-| server | tools | tokens (full schemas) |
-...
-| **Total** | **95** | **20005** |
-
-**Every request:** 20005 tokens of tool schemas without tool-guardian, 1084 with it (94.6% less).
-```
-
-<p align="center">
-  <a href="#quick-start-60-seconds">Quick start</a> &middot;
-  <a href="#works-with">Works with</a> &middot;
-  <a href="#deepseek-harness-results">DeepSeek Harness</a> &middot;
-  <a href="#install-both-deepseek-harness-about-5-minutes">Install both</a> &middot;
-  <a href="docs/first-5-minutes.md">First 5 minutes</a> &middot;
-  <a href="#why-this-exists">Why</a> &middot;
-  <a href="#two-ways-to-run-it">Two ways to run it</a> &middot;
-  <a href="#architecture">Architecture</a> &middot;
-  <a href="#install">Install</a> &middot;
-  <a href="#see-what-it-saves">Measure it</a> &middot;
-  <a href="#it-keeps-tool-results-small-too-030">Output ladder</a> &middot;
-  <a href="#native-deepseek-harness-dsh-bundle">DSH bundle</a> &middot;
-  <a href="#compatibility">Compatibility</a> &middot;
-  <a href="CHANGELOG.md">Changelog</a>
-</p>
-
-An MCP server that sits in front of your other MCP servers and exposes **6 router tools** (8 with [skills](#skills)) instead of dozens of specific ones: four generic ones to list, search, describe and call the tools behind it, plus two for tool-group costs and archived results (see [Tools](#tools)) — discovering the rest **on demand** — so tool definitions stop eating your context window before the model reads a word.
-
-The router never talks to the model backend, so it does not matter whether Ollama, LM Studio, vLLM or llama.cpp serves your model; what matters is that your client's model calls tools (run with Ollama; the others expected, not yet tested).
-
-Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-guardian): **Context Guardian compacts the conversation before the window fills; Tool Guardian keeps the tools from filling it in the first place.** Two halves of the same problem.
-
-| | Without Tool Guardian | With it |
-|---|---|---|
-| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,084 tokens** (3 %); a schema is fetched only when the model asks |
-| A 3,000-line build log with one error ([bench](#measured-savings)) | 115,945 characters land in the conversation | **4,540 characters**, the full original archived and one call away |
-| A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
+<p align="center">One MCP server in front of all your others, so the model fetches a tool schema only when it needs one.</p>
 
 ## Quick start (60 seconds)
 
-Or tell your coding agent: `Install tool-guardian (docs: https://raw.githubusercontent.com/LuminariSoftwares/tool-guardian/main/llms.txt) and route my MCP servers through it.`
-
-Nothing to install: [`uvx`](https://docs.astral.sh/uv/) runs it from PyPI. The example server below
-is the MCP filesystem server, which runs with `npx`, so that one line needs Node.js — the router
-itself is Python 3.9+ and standard library only.
+Nothing to install: [`uvx`](https://docs.astral.sh/uv/) runs it from PyPI. The example server below is the MCP filesystem server, which runs with `npx`, so that one line needs Node.js — the router itself is Python 3.9+ and standard library only.
 
 ```bash
 uvx tool-guardian --version
@@ -75,6 +31,8 @@ uvx --from tool-guardian tool-guardian-setup add files -- npx -y @modelcontextpr
 uvx tool-guardian --selftest
 claude mcp add --scope user tool-guardian -- uvx tool-guardian   # or any client: see "Run" below
 ```
+
+Or tell your coding agent: `Install tool-guardian (docs: https://raw.githubusercontent.com/LuminariSoftwares/tool-guardian/main/llms.txt) and route my MCP servers through it.`
 
 Prefer it installed? `pip install tool-guardian`, then drop the `uvx` prefixes (`tool-guardian-setup add ...`,
 `tool-guardian --selftest`).
@@ -127,6 +85,65 @@ NEXT STEP: answer the user from this result.
 
 Only the router's own six tools were in the model's context the whole time; the 26 backend tools
 were never sent.
+
+
+## Proof
+
+The result line is this repo's bench, run against the recorded `tools/list` answers of seven public MCP servers (no network, no model; abridged where marked):
+
+```text
+$ python bench/bench_tokens.py
+# Tool-Guardian Token Benchmark
+
+Token counting method: estimate:chars/3.5
+
+| server | tools | tokens (full schemas) |
+...
+| **Total** | **95** | **20005** |
+
+**Every request:** 20005 tokens of tool schemas without tool-guardian, 1084 with it (94.6% less).
+```
+<!-- c1 --><!-- c2 -->
+
+Run 2026-11-05 on the v0.10.0 tag. Test suite (`pip install -r requirements-dev.txt && python -m pytest -q`), run 2026-11-05:
+
+```text
+428 passed, 4 skipped in 85.82s (0:01:25)
+```
+<!-- c5 -->
+
+`--selftest` proves the *saving* and that your backends start — it does **not** prove your model will drive the router in your harness. See [Model requirement](#model-requirement-read-this-before-you-switch).
+
+<p align="center">One MCP server in front of all your others. Tested with <b>Claude Code, OpenCode, Cline and Continue</b> (one scripted-model turn per client, see <a href="#works-with">Works with</a>); Claude Desktop, Cursor and other stdio MCP clients: expected, not yet tested.</p>
+
+<p align="center">
+  <a href="#quick-start-60-seconds">Quick start</a> &middot;
+  <a href="#works-with">Works with</a> &middot;
+  <a href="#deepseek-harness-results">DeepSeek Harness</a> &middot;
+  <a href="#install-both-deepseek-harness-about-5-minutes">Install both</a> &middot;
+  <a href="docs/first-5-minutes.md">First 5 minutes</a> &middot;
+  <a href="#why-this-exists">Why</a> &middot;
+  <a href="#two-ways-to-run-it">Two ways to run it</a> &middot;
+  <a href="#architecture">Architecture</a> &middot;
+  <a href="#install">Install</a> &middot;
+  <a href="#see-what-it-saves">Measure it</a> &middot;
+  <a href="#it-keeps-tool-results-small-too-030">Output ladder</a> &middot;
+  <a href="#native-deepseek-harness-dsh-bundle">DSH bundle</a> &middot;
+  <a href="#compatibility">Compatibility</a> &middot;
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
+
+An MCP server that sits in front of your other MCP servers and exposes **6 router tools** (8 with [skills](#skills)) instead of dozens of specific ones: four generic ones to list, search, describe and call the tools behind it, plus two for tool-group costs and archived results (see [Tools](#tools)) — discovering the rest **on demand** — so tool definitions stop eating your context window before the model reads a word.
+
+The router never talks to the model backend, so it does not matter whether Ollama, LM Studio, vLLM or llama.cpp serves your model; what matters is that your client's model calls tools (run with Ollama; the others expected, not yet tested).
+
+Companion to [Context Guardian](https://github.com/LuminariSoftwares/context-guardian): **Context Guardian compacts the conversation before the window fills; Tool Guardian keeps the tools from filling it in the first place.** Two halves of the same problem.
+
+| | Without Tool Guardian | With it |
+|---|---|---|
+| 7 MCP servers on a 32K model ([bench](#measured-savings)) | **20,005 tokens** of schemas on every request (61 % of the window) | **1,084 tokens** (3 %); a schema is fetched only when the model asks |
+| A 3,000-line build log with one error ([bench](#measured-savings)) | 115,945 characters land in the conversation | **4,540 characters**, the full original archived and one call away |
+| A backend that fails to start | an empty tool list the model silently works around | status `UNKNOWN` plus the real error (e.g. `could not start: …`), never an empty list |
 
 ## When *not* to use the router
 
@@ -933,6 +950,8 @@ Four small MIT-licensed tools for people running local models. Each does one job
 | [tool-guardian](https://github.com/LuminariSoftwares/tool-guardian) | Routes many MCP servers through a few tools, so their definitions stop filling the context window. |
 | [stack-guardian](https://github.com/LuminariSoftwares/stack-guardian) | Is my home AI stack healthy? Ollama / OpenAI-compatible nodes, NVIDIA GPUs and Tailscale peers, with a confidence grade on every finding. |
 <!-- guardian-family:end -->
+
+One of four free, MIT-licensed guardians for people running local models, each answering one question from the outside: tool-guardian (what do my tools cost the window?), context-guardian (will this session hit the limit?), stack-guardian (is my stack healthy?), code-guardian (is this code safe to run?).
 
 ## What it does *not* do (yet)
 
