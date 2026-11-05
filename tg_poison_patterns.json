@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "patterns": [
+    {"code": "injection.instruction", "kind": "regex", "value": "(?i)\\b(ignore|disregard|forget|override)\\b[^.\\n]{0,30}\\b(previous|prior|above|earlier|all|any)\\b[^.\\n]{0,20}\\b(instructions?|rules|prompts?|guidelines)\\b", "note": "tells the model to drop its earlier instructions"},
+    {"code": "injection.instruction", "kind": "regex", "value": "(?i)\\b(do not|don't|never)\\b[^.\\n]{0,20}\\b(tell|inform|mention|reveal|show)\\b[^.\\n]{0,20}\\b(the user|user)\\b", "note": "asks the model to hide its actions from the user"},
+    {"code": "injection.tag_block", "kind": "regex", "value": "(?i)</?\\s*(important|system|instructions?|admin|override|secret|hidden)\\s*>", "note": "pseudo-markup block that tries to look like a system message"},
+    {"code": "injection.hidden_unicode", "kind": "unicode_class", "value": "200B-200F,202A-202E,2060-2064,2066-2069,FEFF,E0000-E007F", "note": "zero-width, bidi override and tag characters invisible to a reader"},
+    {"code": "injection.credential_path", "kind": "regex", "value": "(?i)~/\\.ssh|\\bid_(rsa|ed25519|ecdsa|dsa)\\b|(?<![\\w])\\.env\\b|\\.aws/credentials|\\.netrc\\b|\\.npmrc\\b", "note": "points at private keys or credential files"},
+    {"code": "injection.credential_path", "kind": "regex", "value": "(?i)(chrome|chromium|firefox|brave|edge)[^\\n]{0,40}(user data|profiles?|cookies|login data)", "note": "points at a browser profile directory"},
+    {"code": "injection.exfil_url", "kind": "regex", "value": "(?i)\\b(send|post|upload|transmit|forward|exfiltrate|submit|leak)\\b[^\\n]{0,80}https?://", "note": "instruction to ship data to a URL"}
+  ]
+}
