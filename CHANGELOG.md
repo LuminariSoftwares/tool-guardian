@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **`intent` on `call_tool` (P141 S2b, opt-in: `TOOL_GUARDIAN_INTENT=1`).** When a result is big enough to be archived, `intent` returns only the chunks that match it (`[chunk i/N]`, joined by `...`), a `searchable terms:` line and the usual `retrieve_spill` pointer to the full original. Off by default: the schema and every reply are unchanged.
 - **Poisoned-tool warning (P141 S1b).** Backend tool descriptions and schemas are checked against `tg_poison_patterns.json` at start; a flagged tool shows ` ⚠ flagged: <codes>` in `list_capabilities` and a `flags:` line in `describe_tool`, and a `call_tool` result whose first 64 KB matches gets one header line `flagged: <codes> (result unchanged)` -- the body is never edited. Descriptions are pinned trust-on-first-use in `pins.json` beside `state.json`; a later change adds `description.changed`. New optional policy key `on_flag` (`warn` default, `ask`, `deny`; `codes` empty = any flag).
 
 ## dsh-tool-guardian 0.9.1-beta.1 / PyPI tool-guardian 0.9.1 (2026-10-31)

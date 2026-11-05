@@ -108,6 +108,7 @@ tg_usage = _optional("tg_usage")      # --usage: a counted report from the call 
 tg_state = _optional("tg_state")      # session ids, state.json, call-log summary, Claude Code hook
 tg_update = _optional("tg_update")    # the one "update available" line
 tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
+tg_intent = _optional("tg_intent")    # keep only the chunks of a big result that match the caller's intent (P141)
 tg_poison = _optional("tg_poison")    # poisoned-description patterns + trust-on-first-use description pins (P141)
 tg_embed = _optional("tg_embed")      # search by meaning (off unless TOOL_GUARDIAN_EMBED_URL is set)
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
@@ -1861,7 +1862,21 @@ class Router:
                                    "with the same result. Repeating it will not change the "
                                    "answer -- use what you have, change the arguments, or "
                                    "tell the user what is blocking you.]\n" % run)
+            original = text
             text, meta = self.shape(text, tool=tool, is_error=is_error)
+            intent = args.get("intent")
+            if (INTENT_ON and tg_intent is not None and tg_spill is not None and isinstance(intent, str) and intent.strip()
+                    and len(intent) <= 200 and meta.get("lossy") and meta.get("spill_id")):
+                # P141 S2b: the full original is already archived (spill_id); show the chunks that match the
+                # intent instead of the ladder's generic cut, within the same byte budget. Fail open to the ladder.
+                try:
+                    kept, terms = tg_intent.filter_text(original, intent, max(len(text.encode("utf-8")), 2000))
+                    if kept:
+                        text = (kept + "\n" + terms + "\n"
+                                + tg_spill.notice(meta["spill_id"], len(original), len(kept)))
+                        meta = dict(meta, rule="intent", final_chars=len(text))
+                except Exception as exc:  # noqa: BLE001
+                    log("intent filter failed for %s.%s: %s -- the ladder's output stands" % (b.name, tool, exc))
             self._last_meta = dict(meta, is_error=is_error)
             if is_error:
                 nxt = ("the tool reported an error. Check the arguments of %s.%s (describe_tool), then "
@@ -1970,6 +1985,10 @@ class Router:
         return "unknown router tool %r" % name
 
 
+# P141 S2b: `intent` on call_tool is OPT-IN (TOOL_GUARDIAN_INTENT=1) until F5 rules on the P110 pins. Off = today's bytes.
+INTENT_ON = os.environ.get("TOOL_GUARDIAN_INTENT", "") not in ("", "0", "false", "no", "off")
+
+
 def build_router_tools(backends: dict) -> list:
     """The four tools the model always sees. The catalogue of server NAMES goes in
     the description on purpose: unnamed generic tools give the model no reason to
@@ -1996,7 +2015,7 @@ def build_router_tools(backends: dict) -> list:
         # upper-case block. "THESE SERVERS ARE AVAILABLE ...: none reachable" read as an
         # unresolved template on Glama's 2026-10-15 review, because it is one.
         offer = "No server is reachable yet; this says why. "
-    return [
+    tools = [
         {"name": "list_capabilities",
          "description": ("List the tools on the connected MCP servers. " + offer +
                          "With a keyword, search_capabilities is cheaper. Read-only. Returns a "
@@ -2033,6 +2052,11 @@ def build_router_tools(backends: dict) -> list:
              "args": {"description": "Object or JSON string; omit if none."}},
              "required": ["server", "tool"]}},
     ]
+    if INTENT_ON:   # P141 S2b: opt-in until F5 rules on the P110 pins (exact call_tool properties, 1100-token budget)
+        tools[-1]["inputSchema"]["properties"]["intent"] = {
+            "type": "string", "maxLength": 200,
+            "description": "Optional: what you need from a big result; only matching parts come back."}
+    return tools
 
 
 def build_extra_tools() -> list:
