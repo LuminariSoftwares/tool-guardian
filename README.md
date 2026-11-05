@@ -821,6 +821,10 @@ The optional `on_flag` key decides what a flag does (missing = `warn`; empty `co
 
 `ask` uses the same confirmation as an `ask` rule (a dialog where the client supports one, else the confirm token); `deny` blocks the call and names the codes. An unknown `action` is a policy error, so the policy fails closed.
 
+### Ask for only the part you need (opt-in)
+
+With `TOOL_GUARDIAN_INTENT=1`, `call_tool` takes an optional `intent` (up to 200 characters). When a result is big enough to be archived, only the chunks that match the intent come back, each marked `[chunk i/N]`, followed by a `searchable terms:` line and the `retrieve_spill` id of the full original. Without `intent`, or for a small result, the reply is exactly what it was.
+
 ## Ask a human
 
 On a client that can show a yes/no dialog, an `ask` rule asks **you** instead of handing the model a token. The dialog reads `Tool Guardian policy asks before running <server>.<tool>. Allow it?` with the arguments as compact JSON (left out when they are longer than 200 characters). The tool runs only if you answer yes.
