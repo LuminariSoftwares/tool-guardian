@@ -108,7 +108,8 @@ tg_usage = _optional("tg_usage")      # --usage: a counted report from the call 
 tg_state = _optional("tg_state")      # session ids, state.json, call-log summary, Claude Code hook
 tg_update = _optional("tg_update")    # the one "update available" line
 tg_rank = _optional("tg_rank")        # search scoring + per-server "hints"
-tg_intent = _optional("tg_intent")    # keep only the chunks of a big result that match the caller's intent (P141)
+tg_intent = _optional("tg_intent")
+tg_links = _optional("tg_links")      # needs-X hints: which tool produces another tool's required input (P141)    # keep only the chunks of a big result that match the caller's intent (P141)
 tg_poison = _optional("tg_poison")    # poisoned-description patterns + trust-on-first-use description pins (P141)
 tg_embed = _optional("tg_embed")      # search by meaning (off unless TOOL_GUARDIAN_EMBED_URL is set)
 tg_ceiling = _optional("tg_ceiling")  # discovery calls without call_tool are capped
@@ -1506,6 +1507,20 @@ class Router:
             return None
         return qv, vectors, minimum
 
+    def _links(self) -> dict:
+        """P141 S3b: tg_links.link over the live catalogue, cached per catalogue shape; {} on any failure."""
+        if tg_links is None:
+            return {}
+        key = tuple(sorted((n, len(b.tools)) for n, b in self.backends.items() if b.status == "ok"))
+        if getattr(self, "_links_key", None) != key:
+            try:
+                self._links_cache = tg_links.link({n: list(b.tools) for n, b in self.backends.items() if b.status == "ok"})
+            except Exception as exc:  # noqa: BLE001
+                log("needs-X links unavailable: %s" % exc)
+                self._links_cache = {}
+            self._links_key = key
+        return self._links_cache
+
     def search(self, query: str, server: str = "", limit=None) -> str:
         """Find a tool by keyword, one line per hit, in the catalogue's own format.
         The full listing of a big server is expensive in both directions -- the
@@ -1562,6 +1577,10 @@ class Router:
                 found = self.backends[srv].find(tname)
                 if found is not None:
                     out.append("    args: " + compact_args(found.get("inputSchema")))
+            if HINTS_ON:
+                srv, tname = h[1].split(".", 1)
+                for param, producer in self._links().get((srv, tname), [])[:3]:
+                    out.append("    needs %s from: %s" % (param, producer))
         out.append("")
         out.append("NEXT STEP: use call_tool with the server and tool of the line that fits (server.tool) "
                    "and the args shown under it; describe_tool only if those args are unclear.")
@@ -1985,6 +2004,9 @@ class Router:
         return "unknown router tool %r" % name
 
 
+# P141 S3b: needs-X hints in search_capabilities are OPT-IN (TOOL_GUARDIAN_HINTS=1) until F5 rules on the rank golden
+# (tests/test_rank_identity.py freezes search() on the bench catalogs, which carry outputSchema links).
+HINTS_ON = os.environ.get("TOOL_GUARDIAN_HINTS", "") not in ("", "0", "false", "no", "off")
 # P141 S2b: `intent` on call_tool is OPT-IN (TOOL_GUARDIAN_INTENT=1) until F5 rules on the P110 pins. Off = today's bytes.
 INTENT_ON = os.environ.get("TOOL_GUARDIAN_INTENT", "") not in ("", "0", "false", "no", "off")
 
