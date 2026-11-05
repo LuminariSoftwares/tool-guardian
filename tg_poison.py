@@ -47,8 +47,35 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PATTERNS = os.path.join(_HERE, "tg_poison_patterns.json")
 
 
+# The same rows as tg_poison_patterns.json, for an install that has this module but not the json beside it
+# (a wheel built from py-modules cannot carry a top-level data file). Edit the json; tests/test_p141_s4_release.py
+# fails until this copy matches it.
+BUILTIN_PATTERNS = (
+    '{"patterns": [{"code": "injection.instruction", "kind": "regex", "note": "tells the model '
+    'to drop its earlier instructions", "value": "(?i)\\\\b(ignore|disregard|forget|override)\\\\b['
+    '^.\\\\n]{0,30}\\\\b(previous|prior|above|earlier|all|any)\\\\b[^.\\\\n]{0,20}\\\\b(instructions?|rul'
+    'es|prompts?|guidelines)\\\\b"}, {"code": "injection.instruction", "kind": "regex", "note": "'
+    'asks the model to hide its actions from the user", "value": "(?i)\\\\b(do not|don\'t|never)\\\\'
+    'b[^.\\\\n]{0,20}\\\\b(tell|inform|mention|reveal|show)\\\\b[^.\\\\n]{0,20}\\\\b(the user|user)\\\\b"},'
+    ' {"code": "injection.tag_block", "kind": "regex", "note": "pseudo-markup block that tries '
+    'to look like a system message", "value": "(?i)</?\\\\s*(important|system|instructions?|admin'
+    '|override|secret|hidden)\\\\s*>"}, {"code": "injection.hidden_unicode", "kind": "unicode_cla'
+    'ss", "note": "zero-width, bidi override and tag characters invisible to a reader", "value"'
+    ': "200B-200F,202A-202E,2060-2064,2066-2069,FEFF,E0000-E007F"}, {"code": "injection.credent'
+    'ial_path", "kind": "regex", "note": "points at private keys or credential files", "value":'
+    ' "(?i)~/\\\\.ssh|\\\\bid_(rsa|ed25519|ecdsa|dsa)\\\\b|(?<![\\\\w])\\\\.env\\\\b|\\\\.aws/credentials|\\\\.'
+    'netrc\\\\b|\\\\.npmrc\\\\b"}, {"code": "injection.credential_path", "kind": "regex", "note": "po'
+    'ints at a browser profile directory", "value": "(?i)(chrome|chromium|firefox|brave|edge)[^'
+    '\\\\n]{0,40}(user data|profiles?|cookies|login data)"}, {"code": "injection.exfil_url", "kin'
+    'd": "regex", "note": "instruction to ship data to a URL", "value": "(?i)\\\\b(send|post|uplo'
+    'ad|transmit|forward|exfiltrate|submit|leak)\\\\b[^\\\\n]{0,80}https?://"}], "version": 1}'
+)
+
+
 def load_patterns(path=None) -> list:
-    """Read the pattern rows. None = the json beside this file."""
+    """Read the pattern rows. None = the json beside this file, else the built-in copy of it."""
+    if path is None and not os.path.isfile(DEFAULT_PATTERNS):
+        return list(json.loads(BUILTIN_PATTERNS).get("patterns", []))
     with open(path or DEFAULT_PATTERNS, encoding="utf-8") as fh:
         data = json.load(fh)
     return list(data.get("patterns", []))
