@@ -89,7 +89,7 @@ def test_readme_headline_figures_come_from_the_bench():
     router = "{:,}".format(bench["router_tokens"])
     pct = "%.1f" % bench["saved_pct"]
 
-    assert ("<b>Seven MCP servers for %s tokens instead of %s" % (router, full)) in README
+    assert ("<b>Your MCP servers behind one router: %s tokens of tool schemas down to %s on a 7-server setup." % (full, router)) in README  # P82 (TJ 2026-11-06 ~18:36 About wording)
     assert ("**%s tokens** of schemas on every request" % full) in README
     assert ("**%s tokens** (3 %%); a schema is fetched only when the model asks" % router) in README
     assert ("(%s tokens with seven servers behind it, measured below)" % router) in README

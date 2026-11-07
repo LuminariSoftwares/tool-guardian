@@ -2,15 +2,15 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.LuminariSoftwares/tool-guardian",
   "title": "Tool Guardian",
-  "description": "7 MCP servers for 1,084 tokens instead of 20,005. An MCP router that loads tool schemas on demand.",
+  "description": "Too many MCP servers eating your context? A router that loads each tool's schema only when needed.",
   "repository": {"url": "https://github.com/LuminariSoftwares/tool-guardian", "source": "github"},
-  "version": "0.10.0",
+  "version": "0.10.1",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "tool-guardian",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "runtimeHint": "uvx",
       "transport": {"type": "stdio"}
     }
