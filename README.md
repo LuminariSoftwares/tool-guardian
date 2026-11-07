@@ -21,7 +21,7 @@ mcp-name: io.github.LuminariSoftwares/tool-guardian
 
 <p align="center">One MCP server in front of all your others, so the model fetches a tool schema only when it needs one.</p>
 
-<p align="center"><a href="docs/demo_poster.png"><img alt="tool-guardian promo video: 7 MCP servers, 20,005 tokens of tool schemas down to 1,084" src="docs/demo_poster.png" width="720"></a></p>
+https://github.com/user-attachments/assets/f061f799-bffb-4ca4-a150-961bfbfb5c75
 
 ## Quick start (60 seconds)
 
