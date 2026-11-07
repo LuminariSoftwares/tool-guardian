@@ -1,5 +1,9 @@
 # Changelog
 
+## dsh-tool-guardian 0.10.1-beta.1 / PyPI tool-guardian 0.10.1 (2026-11-07)
+
+Wording only; no code change. The README headline, the PyPI description, the npm description and the MCP Registry description now speak about the reader's own MCP servers ("Too many MCP servers eating your context?") instead of "Seven MCP servers", which read as a bundle of servers that ships with the tool. The measured figures are unchanged: 20,005 -> 1,084 tokens on the 7-server bench (`python bench/bench_tokens.py`).
+
 ## dsh-tool-guardian 0.10.0-beta.1 / PyPI tool-guardian 0.10.0 (2026-11-04)
 
 Poisoned-tool warnings, and two opt-in additions: `intent` on `call_tool` (`TOOL_GUARDIAN_INTENT=1`) and needs-X hints in `search_capabilities` (`TOOL_GUARDIAN_HINTS=1`). Nothing breaking: with both variables unset, the schema, search output and every reply are unchanged apart from the flag lines on a tool that matches a pattern.
