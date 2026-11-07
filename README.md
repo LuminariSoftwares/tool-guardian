@@ -21,6 +21,8 @@ mcp-name: io.github.LuminariSoftwares/tool-guardian
 
 <p align="center">One MCP server in front of all your others, so the model fetches a tool schema only when it needs one.</p>
 
+<p align="center"><a href="docs/demo_poster.png"><img alt="tool-guardian promo video: 7 MCP servers, 20,005 tokens of tool schemas down to 1,084" src="docs/demo_poster.png" width="720"></a></p>
+
 ## Quick start (60 seconds)
 
 Nothing to install: [`uvx`](https://docs.astral.sh/uv/) runs it from PyPI. The example server below is the MCP filesystem server, which runs with `npx`, so that one line needs Node.js — the router itself is Python 3.9+ and standard library only.
