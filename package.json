@@ -1,8 +1,8 @@
 {
   "name": "dsh-tool-guardian",
   "mcpName": "io.github.LuminariSoftwares/tool-guardian",
-  "version": "0.10.0-beta.1",
-  "description": "Tool Guardian as a native DeepSeek Harness (DSH) bundle: keeps tool definitions out of the context window by fronting your MCP servers behind a small native router. A bridge to the Python tool-guardian, not a rewrite.",
+  "version": "0.10.1-beta.1",
+  "description": "Too many MCP servers eating your context? Tool Guardian as a native DeepSeek Harness (DSH) bundle sits in front of all of them and loads each tool's schema only when it's needed. A bridge to the Python tool-guardian, not a rewrite.",
   "type": "module",
   "main": "index.js",
   "exports": {
