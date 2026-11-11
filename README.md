@@ -1,5 +1,7 @@
 <h1 align="center">Tool Guardian</h1>
 
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/brand/luminari-softwares-horizontal-dark.svg"><img src="docs/brand/luminari-softwares-horizontal-light.svg" alt="Luminari Softwares" height="40"></picture></p>
+
 <p align="center">
   <a href="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml"><img alt="tests" src="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/test.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/privacy.yml"><img alt="privacy" src="https://github.com/LuminariSoftwares/tool-guardian/actions/workflows/privacy.yml/badge.svg?branch=main"></a>
